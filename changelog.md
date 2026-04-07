@@ -1,5 +1,14 @@
 # Changelog
 
+## [v2.3.0] - The Architecture Refactor & UI Polish
+
+### Added
+* **Live Mode Display:** Added a persistent, boldly styled label to the top-left header of the application. This ensures the user always knows exactly which Game Level/Mode is currently active without having to open the settings menu.
+
+### Changed
+* **Logic Extraction:** Resolved Single Responsibility Principle violations in `main.py` by extracting all state management, settings persistence, keyboard calibration, and game loop logic into a new, dedicated `game_engine.py` module.
+* **UI Simplification:** `main.py` now functions exclusively as a pure View/Controller layer. It handles drawing the Tkinter interface, capturing keystrokes/MIDI events, and routing them to the `GameEngine`, drastically reducing file size and improving maintainability for future expansions.
+
 ## [v2.2.0] - Keyboard Calibration & Logic Refinements
 
 ### Added

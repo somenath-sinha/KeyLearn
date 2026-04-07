@@ -1,21 +1,17 @@
 # main.py
 import tkinter as tk
 from tkinter import ttk, messagebox
-import random
-import time
 import os
-import json
 
 from config import *
 from midi_engine import MidiEngine
 from plot_engine import PlotEngine
+from game_engine import GameEngine
 
 class MidiGameApp:
     def __init__(self, root):
         self.root = root
         self.root.title("MIDI Note Hunter Pro")
-        
-        # Explicitly set the size BEFORE locking the window to prevent truncation
         self.root.geometry("650x950") 
         self.root.configure(bg=BG_COLOUR)
         self.root.resizable(False, False)
@@ -25,27 +21,7 @@ class MidiGameApp:
         self.main_frame = ttk.Frame(self.root, padding="20 20 20 20")
         self.main_frame.pack(fill=tk.BOTH, expand=True)
 
-        self.current_mode_var = tk.StringVar()
-        self.octave_target_var = tk.StringVar()
-        self.buffer_var = tk.StringVar()
-        self.lowest_c = None
-        self.learning_lowest_c = False
-        
-        self.load_settings()
-
-        self.target_note_idx = None
-        self.start_time = None
-        self.first_hit_time = None
-        self.action_timer = None 
-        self.reaction_intervals = []
-        self.hit_history = [] 
-        self.octaves_played = set()
-        
-        self.l3_pending_time = None
-        self.l3_pending_octave = None
-        self.l3_pending_velocity = None
-        self.l4_sequence = []
-        self.l4_progress = 0
+        self.engine = GameEngine()
         
         self.toggles = {
             'hand': False,
@@ -67,29 +43,6 @@ class MidiGameApp:
 
         self.poll_queue()
 
-    def load_settings(self):
-        try:
-            with open('user_settings.json', 'r') as f:
-                settings = json.load(f)
-                self.current_mode_var.set(settings.get('mode', MODES[-1]))
-                self.octave_target_var.set(settings.get('octaves', '5'))
-                self.buffer_var.set(settings.get('buffer', '200ms'))
-                self.lowest_c = settings.get('lowest_c', None)
-        except (FileNotFoundError, json.JSONDecodeError):
-            self.current_mode_var.set(MODES[-1])
-            self.octave_target_var.set("5")
-            self.buffer_var.set("200ms")
-
-    def save_settings(self):
-        settings = {
-            'mode': self.current_mode_var.get(),
-            'octaves': self.octave_target_var.get(),
-            'buffer': self.buffer_var.get(),
-            'lowest_c': self.lowest_c
-        }
-        with open('user_settings.json', 'w') as f:
-            json.dump(settings, f)
-
     def _configure_styles(self):
         style = ttk.Style()
         if 'clam' in style.theme_names():
@@ -106,6 +59,11 @@ class MidiGameApp:
     def setup_ui(self):
         header_frame = ttk.Frame(self.main_frame)
         header_frame.pack(fill=tk.X, pady=(0, 15))
+        
+        # --- New Live Mode Display ---
+        self.mode_disp = ttk.Label(header_frame, text=self.engine.mode, font=("Helvetica", 14, "bold"), foreground=ACCENT_COLOUR)
+        self.mode_disp.pack(side=tk.LEFT)
+        
         self.settings_btn = ttk.Button(header_frame, text="⚙ Settings", command=self.open_settings_window, takefocus=False)
         self.settings_btn.pack(side=tk.RIGHT)
 
@@ -128,13 +86,10 @@ class MidiGameApp:
         self.inst_part2 = ttk.Label(self.inst_frame, text="", font=("Helvetica", 16, "bold"), foreground=ACCENT_COLOUR)
         self.inst_part2.pack(side=tk.LEFT)
 
-        # --- New Live Feedback Section ---
         self.live_feedback_frame = ttk.Frame(self.main_frame)
         self.live_feedback_frame.pack(pady=(5, 5))
-        
         self.current_octave_disp = ttk.Label(self.live_feedback_frame, text="Current Octave: --", font=("Helvetica", 14))
         self.current_octave_disp.pack(side=tk.LEFT, padx=(0, 15))
-        
         self.error_msg_disp = ttk.Label(self.live_feedback_frame, text="", font=("Helvetica", 14, "bold"), foreground=ERROR_COLOUR)
         self.error_msg_disp.pack(side=tk.LEFT)
 
@@ -146,7 +101,7 @@ class MidiGameApp:
         self.avg_time_label.pack(side=tk.LEFT, expand=True)
         self.acc_label = ttk.Label(stats_frame, text="Accuracy: --", font=("Helvetica", 12))
         self.acc_label.pack(side=tk.LEFT, expand=True)
-        self.octave_label = ttk.Label(stats_frame, text=f"Progress: 0 / {self._get_target_max()}", font=("Helvetica", 12))
+        self.octave_label = ttk.Label(stats_frame, text=f"Progress: 0 / {self.engine.get_target_max()}", font=("Helvetica", 12))
         self.octave_label.pack(side=tk.RIGHT, expand=True)
 
         self.next_btn = ttk.Button(self.main_frame, text="Give me a Note! (Spacebar)", command=self.next_note, takefocus=False)
@@ -174,21 +129,12 @@ class MidiGameApp:
         self.trigger_plot_update()
 
     def update_toggle_states(self):
-        if self.current_mode_var.get() == 'Unlocked Mode':
+        if self.engine.mode == 'Unlocked Mode':
             self.hand_btn.config(state=tk.NORMAL)
             self.finger_btn.config(state=tk.NORMAL)
         else:
             self.hand_btn.config(state=tk.DISABLED)
             self.finger_btn.config(state=tk.DISABLED)
-
-    def _get_target_max(self):
-        base_octaves = int(self.octave_target_var.get())
-        mode = self.current_mode_var.get()
-        if mode == 'Level 3: Bilateral Chords':
-            return max(1, base_octaves - 1)
-        elif mode == 'Level 4: Diatonic Run':
-            return 1 
-        return base_octaves
 
     def handle_spacebar(self, event):
         self.next_note()
@@ -210,7 +156,7 @@ class MidiGameApp:
             container.pack_forget()
 
     def trigger_plot_update(self):
-        self.plotter.update_plots(self.hit_history, self.toggles['wrong_notes'])
+        self.plotter.update_plots(self.engine.hit_history, self.toggles['wrong_notes'])
 
     def open_settings_window(self):
         set_win = tk.Toplevel(self.root)
@@ -222,7 +168,8 @@ class MidiGameApp:
         frame.pack(fill=tk.BOTH, expand=True)
 
         ttk.Label(frame, text="Game Mode:", font=("Helvetica", 12)).pack(anchor=tk.W)
-        mode_dropdown = ttk.Combobox(frame, textvariable=self.current_mode_var, state="readonly", takefocus=False)
+        mode_var = tk.StringVar(value=self.engine.mode)
+        mode_dropdown = ttk.Combobox(frame, textvariable=mode_var, state="readonly", takefocus=False)
         mode_dropdown['values'] = MODES
         mode_dropdown.pack(fill=tk.X, pady=(0, 5))
 
@@ -230,16 +177,17 @@ class MidiGameApp:
         rules_label.pack(fill=tk.X, pady=(0, 10))
 
         ttk.Label(frame, text="Target Actions (Octaves/Runs):", font=("Helvetica", 12)).pack(anchor=tk.W)
-        oct_dropdown = ttk.Combobox(frame, textvariable=self.octave_target_var, state="readonly", takefocus=False)
+        oct_var = tk.StringVar(value=str(self.engine.octaves))
+        oct_dropdown = ttk.Combobox(frame, textvariable=oct_var, state="readonly", takefocus=False)
         oct_dropdown.pack(fill=tk.X, pady=(0, 10))
 
         def update_rules(event=None):
-            mode = self.current_mode_var.get()
+            mode = mode_var.get()
             rules_label.config(text=LEVEL_RULES.get(mode, ""))
             if mode == 'Level 3: Bilateral Chords':
                 oct_dropdown['values'] = [str(i) for i in range(2, 8)]
-                if self.octave_target_var.get() == "1":
-                    self.octave_target_var.set("2")
+                if oct_var.get() == "1":
+                    oct_var.set("2")
             else:
                 oct_dropdown['values'] = [str(i) for i in range(1, 8)]
         
@@ -247,7 +195,8 @@ class MidiGameApp:
         update_rules()
 
         ttk.Label(frame, text="Level 3 Chord Timing Buffer:", font=("Helvetica", 12)).pack(anchor=tk.W)
-        buffer_dropdown = ttk.Combobox(frame, textvariable=self.buffer_var, state="readonly", takefocus=False)
+        buffer_var = tk.StringVar(value=self.engine.buffer)
+        buffer_dropdown = ttk.Combobox(frame, textvariable=buffer_var, state="readonly", takefocus=False)
         buffer_dropdown['values'] = list(BUFFER_TIMES.keys())
         buffer_dropdown.pack(fill=tk.X, pady=(0, 10))
 
@@ -262,20 +211,25 @@ class MidiGameApp:
             if current in midi_dropdown['values']: midi_dropdown.set(current)
             else: midi_dropdown.current(0)
 
-        def force_recalibrate():
-            self.lowest_c = None
-            self.save_settings()
+        def do_recalibrate():
+            self.engine.force_recalibrate()
             set_win.destroy()
-            if self.current_mode_var.get() == 'Level 4: Diatonic Run':
+            if self.engine.mode == 'Level 4: Diatonic Run':
                 self.next_note()
 
-        ttk.Button(frame, text="Recalibrate Lowest C (Level 4)", command=force_recalibrate, takefocus=False).pack(fill=tk.X, pady=(0, 15))
+        ttk.Button(frame, text="Recalibrate Lowest C (Level 4)", command=do_recalibrate, takefocus=False).pack(fill=tk.X, pady=(0, 15))
 
         def apply_and_close():
             self.connect_midi(port_var.get())
-            self.save_settings()
+            self.engine.mode = mode_var.get()
+            self.engine.octaves = int(oct_var.get())
+            self.engine.buffer = buffer_var.get()
+            self.engine.save_settings()
+            
+            # Update the UI components
+            self.mode_disp.config(text=self.engine.mode)
             self.update_toggle_states()
-            self.octave_label.config(text=f"Progress: {len(self.octaves_played)} / {self._get_target_max()}")
+            self.octave_label.config(text=f"Progress: {len(self.engine.octaves_played)} / {self.engine.get_target_max()}")
             set_win.destroy()
 
         ttk.Button(frame, text="Save & Close", command=apply_and_close, takefocus=False).pack(fill=tk.X)
@@ -294,270 +248,58 @@ class MidiGameApp:
     def flash_error(self):
         if self.note_label.cget("text") != "Done!":
             self.note_label.config(fg=ERROR_COLOUR)
-            self.root.after(250, lambda: self.note_label.config(fg=TEXT_COLOUR) if len(self.octaves_played) < self._get_target_max() else None)
-
-    def calculate_accuracy(self):
-        total = len(self.hit_history)
-        if total == 0: return "--"
-        correct = sum(1 for h in self.hit_history if h['type'] == 'correct')
-        return f"{(correct / total) * 100:.1f}%"
+            self.root.after(250, lambda: self.note_label.config(fg=TEXT_COLOUR) if len(self.engine.octaves_played) < self.engine.get_target_max() else None)
 
     def process_midi_msg(self, msg):
-        if self.learning_lowest_c:
-            if msg.note % 12 == 0:
-                self.lowest_c = msg.note
-                self.save_settings()
-                self.learning_lowest_c = False
-                original_text = self.note_label.cget("text")
-                self.note_label.config(text="Calibrated!", fg=ACCENT_COLOUR)
-                self.root.after(1000, self.next_note) 
-            else:
-                self.flash_error()
-                os.system("afplay /System/Library/Sounds/Basso.aiff &")
+        resp = self.engine.process_midi_msg(msg)
+        if resp['status'] == 'none': return
+        
+        self.current_octave_disp.config(text=f"Current Octave: {resp['octave']}")
+        
+        if resp['error_msg']:
+            self.error_msg_disp.config(text=resp['error_msg'])
+        else:
+            self.error_msg_disp.config(text="")
+
+        if resp['status'] == 'calibrated':
+            self.note_label.config(text="Calibrated!", fg=ACCENT_COLOUR)
+            self.root.after(1000, self.next_note)
             return
 
-        if self.target_note_idx is None: return
-        target_max = self._get_target_max()
-        if len(self.octaves_played) >= target_max: return 
-
-        note_idx = msg.note % 12
-        octave = (msg.note // 12) - 2 
+        if resp['status'] == 'wrong':
+            self.flash_error()
+            os.system("afplay /System/Library/Sounds/Basso.aiff &")
         
-        # Live Feedback Display
-        self.current_octave_disp.config(text=f"Current Octave: {octave}")
-        
-        current_time = time.time()
-        response_time = current_time - self.action_timer
-        mode = self.current_mode_var.get()
+        if resp['status'] == 'done':
+            self.note_label.config(text="Done!", fg=ACCENT_COLOUR)
+            self.inst_part1.config(text="Press Spacebar for next note")
+            self.inst_part2.config(text="")
 
-        if mode == 'Level 3: Bilateral Chords':
-            self._handle_level_3(msg, note_idx, octave, current_time, response_time, target_max)
-        elif mode == 'Level 4: Diatonic Run':
-            self._handle_level_4(msg, note_idx, octave, current_time, response_time, target_max)
-        else:
-            self._handle_standard(msg, note_idx, octave, current_time, response_time, target_max)
+        if resp['status'] in ['correct', 'done']:
+            if self.engine.first_hit_response_time:
+                self.time_label.config(text=f"1st Hit: {self.engine.first_hit_response_time:.2f}s")
+                self.note_label.config(fg=ACCENT_COLOUR)
 
-        self.acc_label.config(text=f"Accuracy: {self.calculate_accuracy()}")
+        self.avg_time_label.config(text=f"Avg Interval: {self.engine.get_avg_interval()}")
+        self.acc_label.config(text=f"Accuracy: {self.engine.get_accuracy()}")
+        self.octave_label.config(text=f"Progress: {len(self.engine.octaves_played)} / {self.engine.get_target_max()}")
         self.trigger_plot_update()
 
-    def _handle_standard(self, msg, note_idx, octave, current_time, response_time, target_max):
-        if note_idx == self.target_note_idx:
-            self.action_timer = current_time
-            self.error_msg_disp.config(text="") # Clear errors on success
-            
-            if self.first_hit_time is None:
-                self.first_hit_time = current_time
-                self.time_label.config(text=f"1st Hit: {response_time:.2f}s")
-                self.note_label.config(fg=ACCENT_COLOUR)
-            else:
-                self.reaction_intervals.append(response_time)
-                avg_interval = sum(self.reaction_intervals) / len(self.reaction_intervals)
-                self.avg_time_label.config(text=f"Avg Interval: {avg_interval:.2f}s")
-
-            self.hit_history.append({'type': 'correct', 'velocity': msg.velocity, 'response_time': response_time})
-            self.octaves_played.add(octave)
-            self.octave_label.config(text=f"Progress: {len(self.octaves_played)} / {target_max}")
-            
-            if len(self.octaves_played) >= target_max:
-                self.note_label.config(text="Done!", fg=ACCENT_COLOUR)
-                self.inst_part1.config(text="Press Spacebar for next note")
-                self.inst_part2.config(text="")
-        else:
-            self.hit_history.append({'type': 'wrong', 'velocity': msg.velocity, 'response_time': response_time})
-            self.error_msg_disp.config(text=f"Played {NOTES[note_idx]}{octave}, expected {NOTES[self.target_note_idx]}")
-            self.flash_error()
-            os.system("afplay /System/Library/Sounds/Basso.aiff &")
-
-    def _handle_level_3(self, msg, note_idx, octave, current_time, response_time, target_max):
-        buffer_limit = BUFFER_TIMES[self.buffer_var.get()]
-
-        if note_idx == self.target_note_idx:
-            if self.l3_pending_time is None:
-                self.l3_pending_time = current_time
-                self.l3_pending_octave = octave
-                self.l3_pending_velocity = msg.velocity
-                self.error_msg_disp.config(text="")
-            else:
-                sync_delta = current_time - self.l3_pending_time
-                if sync_delta <= buffer_limit and octave != self.l3_pending_octave:
-                    self.action_timer = current_time
-                    self.error_msg_disp.config(text="")
-                    avg_vel = (self.l3_pending_velocity + msg.velocity) / 2
-                    self.hit_history.append({'type': 'correct', 'velocity': avg_vel, 'response_time': response_time, 'sync_time': sync_delta})
-                    
-                    self.octaves_played.add(min(octave, self.l3_pending_octave))
-                    self.l3_pending_time = None 
-                    
-                    if len(self.octaves_played) >= target_max:
-                        self.note_label.config(text="Done!", fg=ACCENT_COLOUR)
-                        self.inst_part1.config(text="Press Spacebar for next note")
-                        self.inst_part2.config(text="")
-                else:
-                    self.hit_history.append({'type': 'wrong', 'velocity': msg.velocity, 'response_time': response_time})
-                    
-                    if octave == self.l3_pending_octave:
-                        self.error_msg_disp.config(text=f"Played {NOTES[note_idx]}{octave} twice, expected separate octave")
-                    else:
-                        self.error_msg_disp.config(text=f"Missed sync window ({sync_delta*1000:.0f}ms)")
-                        
-                    self.flash_error()
-                    os.system("afplay /System/Library/Sounds/Basso.aiff &")
-                    self.l3_pending_time = current_time
-                    self.l3_pending_octave = octave
-
-            self.octave_label.config(text=f"Progress: {len(self.octaves_played)} / {target_max}")
-        else:
-            self.hit_history.append({'type': 'wrong', 'velocity': msg.velocity, 'response_time': response_time})
-            self.error_msg_disp.config(text=f"Played {NOTES[note_idx]}{octave}, expected {NOTES[self.target_note_idx]}")
-            self.flash_error()
-            os.system("afplay /System/Library/Sounds/Basso.aiff &")
-
-    def _handle_level_4(self, msg, note_idx, octave, current_time, response_time, target_max):
-        expected_midi = self.l4_sequence[self.l4_progress]
-        expected_name = NOTES[expected_midi % 12]
-        expected_oct = (expected_midi // 12) - 2
-        
-        if msg.note == expected_midi:
-            self.action_timer = current_time
-            self.error_msg_disp.config(text="")
-            
-            if self.first_hit_time is None:
-                self.first_hit_time = current_time
-                self.time_label.config(text=f"1st Hit: {response_time:.2f}s")
-                self.note_label.config(fg=ACCENT_COLOUR)
-            
-            self.hit_history.append({'type': 'correct', 'velocity': msg.velocity, 'response_time': response_time})
-            self.l4_progress += 1
-
-            if self.l4_progress >= 9:
-                self.octaves_played.add(len(self.octaves_played)) 
-                self.l4_progress = 0 
-                if len(self.octaves_played) >= target_max:
-                    self.note_label.config(text="Done!", fg=ACCENT_COLOUR)
-                    self.inst_part1.config(text="Press Spacebar for next note")
-                    self.inst_part2.config(text="")
-            
-            self.octave_label.config(text=f"Progress: {len(self.octaves_played)} / {target_max}")
-        else:
-            self.hit_history.append({'type': 'wrong', 'velocity': msg.velocity, 'response_time': response_time})
-            self.error_msg_disp.config(text=f"Played {NOTES[note_idx]}{octave}, expected {expected_name}{expected_oct}")
-            self.flash_error()
-            os.system("afplay /System/Library/Sounds/Basso.aiff &")
-
-    def _generate_diatonic(self, start_midi, up=True):
-        seq = [start_midi]
-        curr = start_midi
-        for _ in range(4):
-            curr += 1 if up else -1
-            while (curr % 12) not in WHITE_NOTE_INDICES:
-                curr += 1 if up else -1
-            seq.append(curr)
-        for i in range(3, -1, -1):
-            seq.append(seq[i])
-        return seq
-
     def next_note(self):
-        mode = self.current_mode_var.get()
-        self.start_time = time.time()
-        self.action_timer = self.start_time
-        self.first_hit_time = None
-        self.reaction_intervals = []
-        self.hit_history = []
-        self.octaves_played = set()
+        result = self.engine.next_note(self.toggles)
         
         self.time_label.config(text="1st Hit: --")
         self.avg_time_label.config(text="Avg Interval: --")
         self.acc_label.config(text="Accuracy: --")
-        self.octave_label.config(text=f"Progress: 0 / {self._get_target_max()}")
-        self.error_msg_disp.config(text="") # Clear errors on round start
-
-        prev_note = self.target_note_idx
-
-        if mode == 'Level 4: Diatonic Run':
-            if self.lowest_c is None:
-                self.learning_lowest_c = True
-                self.note_label.config(text="Calibrate", fg=TEXT_COLOUR)
-                self.inst_part1.config(text="Play your leftmost C key ")
-                self.inst_part2.config(text="(Lowest Octave)")
-                return
-                
-            octaves = int(self.octave_target_var.get())
-            min_midi = self.lowest_c
-            max_midi = self.lowest_c + (octaves * 12)
-            midpoint = self.lowest_c + (octaves * 12) / 2
-            
-            min_allowed = min_midi + 12 
-            max_allowed = max_midi - 12 
-            if max_allowed < min_allowed:
-                min_allowed = min_midi
-                max_allowed = max_midi
-            
-            while True:
-                start_midi = random.randint(min_allowed, max_allowed)
-                idx = start_midi % 12
-                if idx not in WHITE_NOTE_INDICES: continue
-                if idx == prev_note: continue
-
-                up = start_midi >= midpoint
-                seq = self._generate_diatonic(start_midi, up)
-                
-                if all(min_midi <= n <= max_midi for n in seq):
-                    self.target_note_idx = idx
-                    self.l4_sequence = seq
-                    start_octave = (start_midi // 12) - 2 
-                    hand = "Right Hand" if up else "Left Hand"
-                    self.inst_part1.config(text=f"{hand} | ")
-                    self.inst_part2.config(text=f"Octave {start_octave}")
-                    break
-            self.l4_progress = 0
-            self.note_label.config(text=NOTES[self.target_note_idx], fg=TEXT_COLOUR)
-
-        elif mode == 'Level 3: Bilateral Chords':
-            while True:
-                nxt = random.randint(0, 11)
-                if nxt != prev_note: break
-            self.target_note_idx = nxt
-            self.note_label.config(text=NOTES[self.target_note_idx], fg=TEXT_COLOUR)
-            self.l3_pending_time = None
-            self.inst_part1.config(text="Both Hands | ")
-            self.inst_part2.config(text="Simultaneously")
-
-        elif mode == 'Level 2: Strict Finger':
-            while True:
-                nxt = random.randint(0, 11)
-                if nxt != prev_note: break
-            self.target_note_idx = nxt
-            self.note_label.config(text=NOTES[self.target_note_idx], fg=TEXT_COLOUR)
-            self.inst_part1.config(text=f"{random.choice(HANDS)} | ")
-            self.inst_part2.config(text=f"{random.choice(FINGERS)}")
-
-        elif mode == 'Level 1: Free Hunt':
-            while True:
-                nxt = random.randint(0, 11)
-                if nxt != prev_note: break
-            self.target_note_idx = nxt
-            self.note_label.config(text=NOTES[self.target_note_idx], fg=TEXT_COLOUR)
-            self.inst_part1.config(text="Any Hand | ")
-            self.inst_part2.config(text="Any Finger")
-
-        else: # Unlocked Mode
-            while True:
-                nxt = random.randint(0, 11)
-                if nxt != prev_note: break
-            self.target_note_idx = nxt
-            self.note_label.config(text=NOTES[self.target_note_idx], fg=TEXT_COLOUR)
-            
-            p1, p2 = "", ""
-            if self.toggles['hand']: p1 = f"{random.choice(HANDS)} | "
-            if self.toggles['finger']: p2 = f"{random.choice(FINGERS)}"
-            
-            if not p1 and not p2:
-                p1 = "Any Hand | Any Finger"
-            
-            self.inst_part1.config(text=p1)
-            self.inst_part2.config(text=p2)
+        self.octave_label.config(text=f"Progress: 0 / {self.engine.get_target_max()}")
+        self.error_msg_disp.config(text="") 
         
-        self.trigger_plot_update()
+        self.note_label.config(text=result['note_text'], fg=TEXT_COLOUR)
+        self.inst_part1.config(text=result['inst1'])
+        self.inst_part2.config(text=result['inst2'])
+        
+        if not result['calibrate']:
+            self.trigger_plot_update()
 
 if __name__ == "__main__":
     root = tk.Tk()
