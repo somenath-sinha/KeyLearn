@@ -214,3 +214,15 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+
+# --- macOS / Project Specific ---
+
+# Block the compiled Mac installers
+*.dmg
+
+# macOS folder attribute hidden files
+.DS_Store
+
+# Ignore legacy local settings files (from before v2.3.4)
+user_settings.json
