@@ -28,18 +28,15 @@ class MidiGameApp:
         self.root.geometry("600x850") 
         self.root.configure(bg=BG_COLOUR)
         
-        # Configure theme to stamp out that weird cream hover colour
         style = ttk.Style()
         if 'clam' in style.theme_names():
             style.theme_use('clam')
             style.configure('.', background=BG_COLOUR, foreground=TEXT_COLOUR)
             style.configure('TLabel', background=BG_COLOUR, foreground=TEXT_COLOUR)
             
-            # Standard button style
             style.configure('TButton', background=TOGGLE_OFF, foreground=TEXT_COLOUR, borderwidth=0)
             style.map('TButton', background=[('active', '#5c6370')])
             
-            # Highlighted toggle button style
             style.configure('Toggle.TButton', background=TOGGLE_ON, foreground='#ffffff', font=('Helvetica', 10, 'bold'))
             style.map('Toggle.TButton', background=[('active', '#4D8BBE')])
 
@@ -56,13 +53,18 @@ class MidiGameApp:
         self.octaves_played = set()
         self.midi_port = None
         self.msg_queue = queue.Queue()
+        
+        # Native Python booleans replacing buggy tk.BooleanVar
+        self.toggles = {
+            'hand': False,
+            'finger': False,
+            'wrong_notes': False
+        }
 
         self.setup_ui()
         
-        # Bind the spacebar to the 'Give me a note' function
         self.root.bind('<space>', lambda event: self.next_note())
         
-        # Auto-connect to the first available MIDI port in the background
         available_ports = mido.get_input_names()
         if available_ports:
             self.connect_midi(available_ports[0])
@@ -74,22 +76,19 @@ class MidiGameApp:
         header_frame = ttk.Frame(self.main_frame)
         header_frame.pack(fill=tk.X, pady=(0, 15))
         
-        # 1. Devices Button tucked away in the top right
         self.devices_btn = ttk.Button(header_frame, text="⚙ MIDI Devices", command=self.open_devices_window)
         self.devices_btn.pack(side=tk.RIGHT)
 
         # --- Inline Toggles Section ---
-        self.use_hand_var = tk.BooleanVar(value=False)
-        self.use_finger_var = tk.BooleanVar(value=False)
-        self.show_wrong_var = tk.BooleanVar(value=False)
-
         toggles_frame = ttk.Frame(self.main_frame)
         toggles_frame.pack(fill=tk.X, pady=(0, 10))
 
-        self.hand_btn = ttk.Button(toggles_frame, text="Hand: OFF", command=lambda: self.toggle_btn(self.use_hand_var, self.hand_btn, "Hand"))
+        self.hand_btn = ttk.Button(toggles_frame, text="Hand: OFF")
+        self.hand_btn.config(command=lambda: self.toggle_state('hand', self.hand_btn, "Hand"))
         self.hand_btn.pack(side=tk.LEFT, padx=(0, 10))
 
-        self.finger_btn = ttk.Button(toggles_frame, text="Finger: OFF", command=lambda: self.toggle_btn(self.use_finger_var, self.finger_btn, "Finger"))
+        self.finger_btn = ttk.Button(toggles_frame, text="Finger: OFF")
+        self.finger_btn.config(command=lambda: self.toggle_state('finger', self.finger_btn, "Finger"))
         self.finger_btn.pack(side=tk.LEFT)
 
         # --- Display Section ---
@@ -106,7 +105,6 @@ class MidiGameApp:
         self.time_label = ttk.Label(stats_frame, text="1st Hit: --", font=("Helvetica", 12))
         self.time_label.pack(side=tk.LEFT, expand=True)
         
-        # New Average Interval Label
         self.avg_time_label = ttk.Label(stats_frame, text="Avg Interval: --", font=("Helvetica", 12))
         self.avg_time_label.pack(side=tk.LEFT, expand=True)
         
@@ -120,7 +118,8 @@ class MidiGameApp:
         graph_ctrl_frame = ttk.Frame(self.main_frame)
         graph_ctrl_frame.pack(fill=tk.X)
         
-        self.wrong_notes_btn = ttk.Button(graph_ctrl_frame, text="Show Incorrect Notes: OFF", command=lambda: self.toggle_btn(self.show_wrong_var, self.wrong_notes_btn, "Show Incorrect Notes", self.update_plot))
+        self.wrong_notes_btn = ttk.Button(graph_ctrl_frame, text="Show Incorrect Notes: OFF")
+        self.wrong_notes_btn.config(command=lambda: self.toggle_state('wrong_notes', self.wrong_notes_btn, "Show Incorrect Notes", self.update_plot))
         self.wrong_notes_btn.pack(side=tk.LEFT, pady=(0, 5))
 
         # --- Embedded Graph ---
@@ -128,26 +127,32 @@ class MidiGameApp:
         self.fig.patch.set_facecolor(BG_COLOUR) 
         
         self.ax = self.fig.add_subplot(111)
-        self.ax.set_facecolor('#1E2227') 
-        self.ax.tick_params(colors=TEXT_COLOUR)
-        
-        self.ax.spines['top'].set_visible(False)
-        self.ax.spines['right'].set_visible(False)
-        self.ax.spines['bottom'].set_color(TEXT_COLOUR)
-        self.ax.spines['left'].set_color(TEXT_COLOUR)
-
         self.canvas = FigureCanvasTkAgg(self.fig, master=self.main_frame)
         self.canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
         
         self.update_plot() 
 
-    def toggle_btn(self, var, btn, base_text, callback=None):
-        """Custom toggle logic to mimic switch behaviour"""
-        var.set(not var.get())
-        state = "ON" if var.get() else "OFF"
+    def apply_graph_styling(self):
+        """Re-applies the dark theme to the graph after it clears"""
+        self.ax.set_facecolor('#1E2227') 
+        self.ax.spines['top'].set_visible(False)
+        self.ax.spines['right'].set_visible(False)
+        self.ax.spines['bottom'].set_color(TEXT_COLOUR)
+        self.ax.spines['left'].set_color(TEXT_COLOUR)
+        
+        self.ax.set_title("Live Velocity Tracking", pad=10, color=TEXT_COLOUR)
+        self.ax.set_ylim(0, 130)
+        self.ax.set_ylabel("Velocity", color=TEXT_COLOUR)
+        self.ax.set_xlabel("Hit Sequence", color=TEXT_COLOUR)
+        self.ax.tick_params(colors=TEXT_COLOUR)
+
+    def toggle_state(self, key, btn, base_text, callback=None):
+        """Custom toggle logic using standard Python dictionaries"""
+        self.toggles[key] = not self.toggles[key]
+        state = "ON" if self.toggles[key] else "OFF"
         btn.config(text=f"{base_text}: {state}")
         
-        if var.get():
+        if self.toggles[key]:
             btn.configure(style='Toggle.TButton')
         else:
             btn.configure(style='TButton')
@@ -156,7 +161,6 @@ class MidiGameApp:
             callback()
 
     def open_devices_window(self):
-        """Dedicated window for MIDI device selection"""
         dev_win = tk.Toplevel(self.root)
         dev_win.title("MIDI Devices")
         dev_win.geometry("300x150")
@@ -176,7 +180,6 @@ class MidiGameApp:
 
         dropdown.pack(fill=tk.X, pady=(5, 15))
         
-        # Pre-select current port if it exists
         if dropdown['values']:
             current = self.midi_port.name if self.midi_port else ""
             if current in dropdown['values']:
@@ -226,7 +229,6 @@ class MidiGameApp:
                 self.time_label.config(text=f"1st Hit: {reaction:.2f}s")
                 self.note_label.config(fg=ACCENT_COLOUR)
             else:
-                # Interval logic for subsequent correct octaves
                 interval = current_time - self.last_hit_time
                 self.reaction_intervals.append(interval)
                 self.last_hit_time = current_time
@@ -253,9 +255,9 @@ class MidiGameApp:
         self.note_label.config(text=target_note_name, fg=TEXT_COLOUR)
         
         instructions = []
-        if self.use_hand_var.get():
+        if self.toggles['hand']:
             instructions.append(random.choice(HANDS))
-        if self.use_finger_var.get():
+        if self.toggles['finger']:
             instructions.append(random.choice(FINGERS))
             
         self.instruction_label.config(text=" | ".join(instructions) if instructions else "")
@@ -276,15 +278,9 @@ class MidiGameApp:
 
     def update_plot(self):
         self.ax.clear()
+        self.apply_graph_styling() # Re-apply styles after clearing
         
-        # Fixed the black text issue by explicitly setting label colors here
-        self.ax.set_title("Live Velocity Tracking", pad=10, color=TEXT_COLOUR)
-        self.ax.set_ylim(0, 130)
-        self.ax.set_ylabel("Velocity", color=TEXT_COLOUR)
-        self.ax.set_xlabel("Hit Sequence", color=TEXT_COLOUR)
-        self.ax.tick_params(colors=TEXT_COLOUR)
-        
-        show_wrong = self.show_wrong_var.get()
+        show_wrong = self.toggles['wrong_notes']
         
         x_correct, y_correct = [], []
         x_wrong, y_wrong = [], []

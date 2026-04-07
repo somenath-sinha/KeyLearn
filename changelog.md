@@ -25,3 +25,9 @@ Basic app
 
 ### Fixed
 * **Graph Styling:** Explicitly defined text colours for the Matplotlib graph's axes, title, and tick marks to ensure complete visibility and contrast against the application's dark UI theme.
+
+## [v1.2.1]
+
+### Fixed
+* **Toggle State Sync:** Resolved an underlying bug where the "Show Incorrect Notes" toggle failed to render missed notes on the graph. This was caused by Tkinter's native `tk.BooleanVar` losing reference tracking; state management has been entirely refactored to use standard Python boolean dictionaries.
+* **Graph Styling Persistence:** Fixed a visual glitch where the embedded Matplotlib graph would lose its dark mode styling (background and spines) upon redrawing. Styling properties are now correctly re-injected via `apply_graph_styling()` immediately following the `ax.clear()` command.
