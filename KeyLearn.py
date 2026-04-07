@@ -7,7 +7,7 @@ import queue
 import os
 from matplotlib.figure import Figure
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
-from matplotlib.ticker import MaxNLocator
+from matplotlib.ticker import MaxNLocator, FuncFormatter
 
 NOTES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
 HANDS = ['Left Hand', 'Right Hand']
@@ -20,12 +20,13 @@ ACCENT_COLOUR = '#98C379'
 ERROR_COLOUR = '#E06C75'  
 TOGGLE_OFF = '#3E4451'
 TOGGLE_ON = '#61AFEF'
+TOOLTIP_BG = '#1E2227'
 
 class MidiGameApp:
     def __init__(self, root):
         self.root = root
         self.root.title("MIDI Note Hunter Pro")
-        self.root.geometry("600x850") 
+        self.root.minsize(600, 300) 
         self.root.configure(bg=BG_COLOUR)
         
         style = ttk.Style()
@@ -39,31 +40,38 @@ class MidiGameApp:
             
             style.configure('Toggle.TButton', background=TOGGLE_ON, foreground='#ffffff', font=('Helvetica', 10, 'bold'))
             style.map('Toggle.TButton', background=[('active', '#4D8BBE')])
+            
+            # Combobox dark mode fix
+            style.configure('TCombobox', fieldbackground=BG_COLOUR, background=TOGGLE_OFF, foreground=TEXT_COLOUR, bordercolor=BG_COLOUR, arrowcolor=TEXT_COLOUR)
+            style.map('TCombobox', 
+                      fieldbackground=[('readonly', BG_COLOUR)],
+                      selectbackground=[('readonly', BG_COLOUR)],
+                      selectforeground=[('readonly', TEXT_COLOUR)])
 
         self.main_frame = ttk.Frame(self.root, padding="20 20 20 20")
         self.main_frame.pack(fill=tk.BOTH, expand=True)
 
-        # State variables
         self.target_note_idx = None
         self.start_time = None
         self.first_hit_time = None
-        self.last_hit_time = None
+        self.action_timer = None 
         self.reaction_intervals = []
         self.hit_history = [] 
         self.octaves_played = set()
         self.midi_port = None
         self.msg_queue = queue.Queue()
+        self.octave_target_var = tk.StringVar(value="5")
         
-        # Native Python booleans replacing buggy tk.BooleanVar
         self.toggles = {
             'hand': False,
             'finger': False,
-            'wrong_notes': False
+            'wrong_notes': False,
+            'show_vel_graph': True,
+            'show_resp_graph': True
         }
 
         self.setup_ui()
-        
-        self.root.bind('<space>', lambda event: self.next_note())
+        self.root.bind('<space>', self.handle_spacebar)
         
         available_ports = mido.get_input_names()
         if available_ports:
@@ -71,23 +79,27 @@ class MidiGameApp:
 
         self.poll_queue()
 
+    def handle_spacebar(self, event):
+        self.next_note()
+        return "break"
+
     def setup_ui(self):
         # --- Header Section ---
         header_frame = ttk.Frame(self.main_frame)
         header_frame.pack(fill=tk.X, pady=(0, 15))
-        
-        self.devices_btn = ttk.Button(header_frame, text="⚙ MIDI Devices", command=self.open_devices_window)
-        self.devices_btn.pack(side=tk.RIGHT)
+
+        self.settings_btn = ttk.Button(header_frame, text="⚙ Settings", command=self.open_settings_window, takefocus=False)
+        self.settings_btn.pack(side=tk.RIGHT)
 
         # --- Inline Toggles Section ---
         toggles_frame = ttk.Frame(self.main_frame)
         toggles_frame.pack(fill=tk.X, pady=(0, 10))
 
-        self.hand_btn = ttk.Button(toggles_frame, text="Hand: OFF")
+        self.hand_btn = ttk.Button(toggles_frame, text="Hand: OFF", takefocus=False)
         self.hand_btn.config(command=lambda: self.toggle_state('hand', self.hand_btn, "Hand"))
         self.hand_btn.pack(side=tk.LEFT, padx=(0, 10))
 
-        self.finger_btn = ttk.Button(toggles_frame, text="Finger: OFF")
+        self.finger_btn = ttk.Button(toggles_frame, text="Finger: OFF", takefocus=False)
         self.finger_btn.config(command=lambda: self.toggle_state('finger', self.finger_btn, "Finger"))
         self.finger_btn.pack(side=tk.LEFT)
 
@@ -107,47 +119,127 @@ class MidiGameApp:
         
         self.avg_time_label = ttk.Label(stats_frame, text="Avg Interval: --", font=("Helvetica", 12))
         self.avg_time_label.pack(side=tk.LEFT, expand=True)
+
+        self.acc_label = ttk.Label(stats_frame, text="Accuracy: --", font=("Helvetica", 12))
+        self.acc_label.pack(side=tk.LEFT, expand=True)
         
-        self.octave_label = ttk.Label(stats_frame, text="Octaves: 0", font=("Helvetica", 12))
+        self.octave_label = ttk.Label(stats_frame, text=f"Octaves: 0 / {self.octave_target_var.get()}", font=("Helvetica", 12))
         self.octave_label.pack(side=tk.RIGHT, expand=True)
 
-        self.next_btn = ttk.Button(self.main_frame, text="Give me a Note! (Spacebar)", command=self.next_note)
+        self.next_btn = ttk.Button(self.main_frame, text="Give me a Note! (Spacebar)", command=self.next_note, takefocus=False)
         self.next_btn.pack(fill=tk.X, pady=(10, 20))
 
         # --- Graph Controls ---
         graph_ctrl_frame = ttk.Frame(self.main_frame)
-        graph_ctrl_frame.pack(fill=tk.X)
+        graph_ctrl_frame.pack(fill=tk.X, pady=(0, 10))
         
-        self.wrong_notes_btn = ttk.Button(graph_ctrl_frame, text="Show Incorrect Notes: OFF")
-        self.wrong_notes_btn.config(command=lambda: self.toggle_state('wrong_notes', self.wrong_notes_btn, "Show Incorrect Notes", self.update_plot))
-        self.wrong_notes_btn.pack(side=tk.LEFT, pady=(0, 5))
+        self.wrong_notes_btn = ttk.Button(graph_ctrl_frame, text="Show Incorrect Notes: OFF", takefocus=False)
+        self.wrong_notes_btn.config(command=lambda: self.toggle_state('wrong_notes', self.wrong_notes_btn, "Show Incorrect Notes", self.update_plots))
+        self.wrong_notes_btn.pack(side=tk.LEFT)
 
-        # --- Embedded Graph ---
-        self.fig = Figure(figsize=(5, 3), dpi=100)
-        self.fig.patch.set_facecolor(BG_COLOUR) 
+        # Individual Graph Toggles
+        self.resp_graphs_btn = ttk.Button(graph_ctrl_frame, text="Response: ON", style='Toggle.TButton', takefocus=False)
+        self.resp_graphs_btn.config(command=lambda: self.toggle_graph_visibility('show_resp_graph', self.resp_graphs_btn, "Response", self.graph_container_resp))
+        self.resp_graphs_btn.pack(side=tk.RIGHT, padx=(10, 0))
+
+        self.vel_graphs_btn = ttk.Button(graph_ctrl_frame, text="Velocity: ON", style='Toggle.TButton', takefocus=False)
+        self.vel_graphs_btn.config(command=lambda: self.toggle_graph_visibility('show_vel_graph', self.vel_graphs_btn, "Velocity", self.graph_container_vel))
+        self.vel_graphs_btn.pack(side=tk.RIGHT)
+
+        # --- Embedded Graphs Containers (Split into two for independent collapsing) ---
+        self.graph_container_vel = ttk.Frame(self.main_frame)
+        self.graph_container_vel.pack(fill=tk.BOTH, expand=True)
+
+        self.fig_vel = Figure(figsize=(5, 2.75), dpi=100)
+        self.fig_vel.patch.set_facecolor(BG_COLOUR)
+        self.ax_vel = self.fig_vel.add_subplot(111)
+        self.canvas_vel = FigureCanvasTkAgg(self.fig_vel, master=self.graph_container_vel)
+        self.canvas_vel.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+
+        self.graph_container_resp = ttk.Frame(self.main_frame)
+        self.graph_container_resp.pack(fill=tk.BOTH, expand=True)
+
+        self.fig_resp = Figure(figsize=(5, 2.75), dpi=100)
+        self.fig_resp.patch.set_facecolor(BG_COLOUR)
+        self.ax_resp = self.fig_resp.add_subplot(111)
+        self.canvas_resp = FigureCanvasTkAgg(self.fig_resp, master=self.graph_container_resp)
+        self.canvas_resp.get_tk_widget().pack(fill=tk.BOTH, expand=True)
         
-        self.ax = self.fig.add_subplot(111)
-        self.canvas = FigureCanvasTkAgg(self.fig, master=self.main_frame)
-        self.canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+        # Tooltip
+        self.annot = self.ax_vel.annotate("", xy=(0,0), xytext=(10,10), textcoords="offset points",
+                                     bbox=dict(boxstyle="round", fc=TOOLTIP_BG, ec=TEXT_COLOUR, alpha=0.9),
+                                     color=TEXT_COLOUR, zorder=10)
+        self.annot.set_visible(False)
+        self.canvas_vel.mpl_connect("motion_notify_event", self.on_hover)
         
-        self.update_plot() 
+        self.sc_correct = None
+        self.sc_wrong = None
+        
+        self.update_plots() 
+
+    def toggle_graph_visibility(self, toggle_key, btn, label, container):
+        self.toggles[toggle_key] = not self.toggles[toggle_key]
+        if self.toggles[toggle_key]:
+            btn.config(text=f"{label}: ON", style='Toggle.TButton')
+            container.pack(fill=tk.BOTH, expand=True)
+        else:
+            btn.config(text=f"{label}: OFF", style='TButton')
+            container.pack_forget()
+
+    def format_time_ticks(self, x, pos):
+        if x >= 60:
+            return f"{int(x//60)}m"
+        elif x > 0:
+            return f"{x:g}s"
+        return "0s"
+
+    def on_hover(self, event):
+        vis = self.annot.get_visible()
+        if event.inaxes == self.ax_vel:
+            cont_c, ind_c = self.sc_correct.contains(event) if self.sc_correct else (False, {})
+            cont_w, ind_w = self.sc_wrong.contains(event) if self.sc_wrong else (False, {})
+            
+            if cont_c:
+                pos = self.sc_correct.get_offsets()[ind_c["ind"][0]]
+                self.annot.xy = pos
+                self.annot.set_text(f"Vel: {int(pos[1])}")
+                self.annot.set_visible(True)
+                self.canvas_vel.draw_idle()
+            elif cont_w:
+                pos = self.sc_wrong.get_offsets()[ind_w["ind"][0]]
+                self.annot.xy = pos
+                self.annot.set_text(f"Vel: {int(pos[1])}")
+                self.annot.set_visible(True)
+                self.canvas_vel.draw_idle()
+            else:
+                if vis:
+                    self.annot.set_visible(False)
+                    self.canvas_vel.draw_idle()
 
     def apply_graph_styling(self):
-        """Re-applies the dark theme to the graph after it clears"""
-        self.ax.set_facecolor('#1E2227') 
-        self.ax.spines['top'].set_visible(False)
-        self.ax.spines['right'].set_visible(False)
-        self.ax.spines['bottom'].set_color(TEXT_COLOUR)
-        self.ax.spines['left'].set_color(TEXT_COLOUR)
+        for ax in [self.ax_vel, self.ax_resp]:
+            ax.set_facecolor('#1E2227') 
+            ax.spines['top'].set_visible(False)
+            ax.spines['right'].set_visible(False)
+            ax.spines['bottom'].set_color(TEXT_COLOUR)
+            ax.spines['left'].set_color(TEXT_COLOUR)
+            ax.tick_params(colors=TEXT_COLOUR, which='both') 
+            ax.xaxis.set_major_locator(MaxNLocator(integer=True))
+            
+        self.ax_vel.set_title("Velocity Tracking", pad=10, color=TEXT_COLOUR)
+        self.ax_vel.set_ylim(0, 130)
+        self.ax_vel.set_ylabel("Velocity", color=TEXT_COLOUR)
         
-        self.ax.set_title("Live Velocity Tracking", pad=10, color=TEXT_COLOUR)
-        self.ax.set_ylim(0, 130)
-        self.ax.set_ylabel("Velocity", color=TEXT_COLOUR)
-        self.ax.set_xlabel("Hit Sequence", color=TEXT_COLOUR)
-        self.ax.tick_params(colors=TEXT_COLOUR)
+        self.ax_resp.set_title("Response Time Interval (Log Scale)", pad=10, color=TEXT_COLOUR)
+        self.ax_resp.set_ylabel("Time", color=TEXT_COLOUR)
+        self.ax_resp.set_xlabel("Hit Sequence", color=TEXT_COLOUR)
+        
+        # Override Matplotlib's scientific log formatter for both major and minor ticks
+        formatter = FuncFormatter(self.format_time_ticks)
+        self.ax_resp.yaxis.set_major_formatter(formatter)
+        self.ax_resp.yaxis.set_minor_formatter(formatter)
 
     def toggle_state(self, key, btn, base_text, callback=None):
-        """Custom toggle logic using standard Python dictionaries"""
         self.toggles[key] = not self.toggles[key]
         state = "ON" if self.toggles[key] else "OFF"
         btn.config(text=f"{base_text}: {state}")
@@ -160,19 +252,19 @@ class MidiGameApp:
         if callback:
             callback()
 
-    def open_devices_window(self):
-        dev_win = tk.Toplevel(self.root)
-        dev_win.title("MIDI Devices")
-        dev_win.geometry("300x150")
-        dev_win.configure(bg=BG_COLOUR)
+    def open_settings_window(self):
+        set_win = tk.Toplevel(self.root)
+        set_win.title("Settings")
+        set_win.geometry("350x250")
+        set_win.configure(bg=BG_COLOUR)
         
-        frame = ttk.Frame(dev_win, padding="20")
+        frame = ttk.Frame(set_win, padding="20")
         frame.pack(fill=tk.BOTH, expand=True)
 
+        # MIDI Select
         ttk.Label(frame, text="Select MIDI Input:", font=("Helvetica", 12)).pack(anchor=tk.W)
-        
         port_var = tk.StringVar()
-        dropdown = ttk.Combobox(frame, textvariable=port_var, state="readonly")
+        dropdown = ttk.Combobox(frame, textvariable=port_var, state="readonly", takefocus=False)
         try:
             dropdown['values'] = mido.get_input_names()
         except Exception:
@@ -187,11 +279,18 @@ class MidiGameApp:
             else:
                 dropdown.current(0)
 
+        # Octave Select
+        ttk.Label(frame, text="Select number of octaves:", font=("Helvetica", 12)).pack(anchor=tk.W)
+        oct_dropdown = ttk.Combobox(frame, textvariable=self.octave_target_var, state="readonly", takefocus=False)
+        oct_dropdown['values'] = [str(i) for i in range(1, 8)] 
+        oct_dropdown.pack(fill=tk.X, pady=(5, 15))
+
         def apply_and_close():
             self.connect_midi(port_var.get())
-            dev_win.destroy()
+            self.octave_label.config(text=f"Octaves: {len(self.octaves_played)} / {self.octave_target_var.get()}")
+            set_win.destroy()
 
-        ttk.Button(frame, text="Connect", command=apply_and_close).pack(fill=tk.X)
+        ttk.Button(frame, text="Save & Close", command=apply_and_close, takefocus=False).pack(fill=tk.X)
 
     def connect_midi(self, port_name):
         if not port_name: return
@@ -211,42 +310,64 @@ class MidiGameApp:
             msg = self.msg_queue.get()
             self.process_midi_msg(msg)
         self.root.after(50, self.poll_queue)
+        
+    def flash_error(self):
+        current_text = self.note_label.cget("text")
+        if current_text != "Done!":
+            self.note_label.config(fg=ERROR_COLOUR)
+            self.root.after(250, self.reset_colour)
+            
+    def reset_colour(self):
+        if self.target_note_idx is not None and len(self.octaves_played) < int(self.octave_target_var.get()):
+            self.note_label.config(fg=TEXT_COLOUR)
+
+    def calculate_accuracy(self):
+        total = len(self.hit_history)
+        if total == 0:
+            return "--"
+        correct = sum(1 for h in self.hit_history if h['type'] == 'correct')
+        return f"{(correct / total) * 100:.1f}%"
 
     def process_midi_msg(self, msg):
         if self.target_note_idx is None:
             return
+            
+        target_max = int(self.octave_target_var.get())
+        if len(self.octaves_played) >= target_max:
+            return 
 
         note_idx = msg.note % 12
         octave = (msg.note // 12) - 1
         current_time = time.time()
+        
+        response_time = current_time - self.action_timer
+        self.action_timer = current_time
 
         if note_idx == self.target_note_idx:
-            # First hit logic
             if self.first_hit_time is None:
                 self.first_hit_time = current_time
-                self.last_hit_time = current_time
-                reaction = self.first_hit_time - self.start_time
-                self.time_label.config(text=f"1st Hit: {reaction:.2f}s")
+                self.time_label.config(text=f"1st Hit: {response_time:.2f}s")
                 self.note_label.config(fg=ACCENT_COLOUR)
             else:
-                interval = current_time - self.last_hit_time
-                self.reaction_intervals.append(interval)
-                self.last_hit_time = current_time
-                
+                self.reaction_intervals.append(response_time)
                 avg_interval = sum(self.reaction_intervals) / len(self.reaction_intervals)
                 self.avg_time_label.config(text=f"Avg Interval: {avg_interval:.2f}s")
 
-            # Track correct hit
-            self.hit_history.append({'type': 'correct', 'velocity': msg.velocity})
+            self.hit_history.append({'type': 'correct', 'velocity': msg.velocity, 'response_time': response_time})
             self.octaves_played.add(octave)
-            self.octave_label.config(text=f"Octaves: {len(self.octaves_played)}")
+            self.octave_label.config(text=f"Octaves: {len(self.octaves_played)} / {self.octave_target_var.get()}")
+            
+            if len(self.octaves_played) >= target_max:
+                self.note_label.config(text="Done!", fg=ACCENT_COLOUR)
+                self.instruction_label.config(text="Press Spacebar for next note")
             
         else:
-            # Track incorrect hit
-            self.hit_history.append({'type': 'wrong', 'velocity': msg.velocity})
+            self.hit_history.append({'type': 'wrong', 'velocity': msg.velocity, 'response_time': response_time})
+            self.flash_error()
             os.system("afplay /System/Library/Sounds/Basso.aiff &")
             
-        self.update_plot()
+        self.acc_label.config(text=f"Accuracy: {self.calculate_accuracy()}")
+        self.update_plots()
 
     def next_note(self):
         self.target_note_idx = random.randint(0, 11)
@@ -262,51 +383,76 @@ class MidiGameApp:
             
         self.instruction_label.config(text=" | ".join(instructions) if instructions else "")
         
-        # Reset stats
         self.start_time = time.time()
+        self.action_timer = self.start_time
         self.first_hit_time = None
-        self.last_hit_time = None
         self.reaction_intervals = []
         self.hit_history = []
         self.octaves_played = set()
         
         self.time_label.config(text="1st Hit: --")
         self.avg_time_label.config(text="Avg Interval: --")
-        self.octave_label.config(text="Octaves: 0")
+        self.acc_label.config(text="Accuracy: --")
+        self.octave_label.config(text=f"Octaves: 0 / {self.octave_target_var.get()}")
         
-        self.update_plot()
+        self.update_plots()
 
-    def update_plot(self):
-        self.ax.clear()
-        self.apply_graph_styling() # Re-apply styles after clearing
+    def update_plots(self):
+        self.ax_vel.clear()
+        self.ax_resp.clear()
+        self.apply_graph_styling() 
         
         show_wrong = self.toggles['wrong_notes']
         
         x_correct, y_correct = [], []
         x_wrong, y_wrong = [], []
         
+        x_all = []
+        y_response = []
+        bar_colors = []
+        
         for i, hit in enumerate(self.hit_history):
             hit_index = i + 1
             if hit['type'] == 'correct':
                 x_correct.append(hit_index)
                 y_correct.append(hit['velocity'])
+                
+                x_all.append(hit_index)
+                y_response.append(hit['response_time'])
+                bar_colors.append(ACCENT_COLOUR)
+                
             elif hit['type'] == 'wrong' and show_wrong:
                 x_wrong.append(hit_index)
                 y_wrong.append(hit['velocity'])
                 
+                x_all.append(hit_index)
+                y_response.append(hit['response_time'])
+                bar_colors.append(ERROR_COLOUR)
+                
+        self.sc_correct = None
+        self.sc_wrong = None
+        
         if x_correct:
-            self.ax.plot(x_correct, y_correct, color=ACCENT_COLOUR, alpha=0.4, zorder=1)
-            self.ax.scatter(x_correct, y_correct, color=ACCENT_COLOUR, s=50, zorder=2, label="Target Note")
+            self.ax_vel.plot(x_correct, y_correct, color=ACCENT_COLOUR, alpha=0.4, zorder=1)
+            self.sc_correct = self.ax_vel.scatter(x_correct, y_correct, color=ACCENT_COLOUR, s=50, zorder=2, label="Target Note")
             
         if x_wrong:
-            self.ax.scatter(x_wrong, y_wrong, color=ERROR_COLOUR, s=50, marker='x', zorder=3, label="Missed Note")
+            self.sc_wrong = self.ax_vel.scatter(x_wrong, y_wrong, color=ERROR_COLOUR, s=50, marker='x', zorder=3, label="Missed Note")
             
         if x_correct or x_wrong:
-            self.ax.legend(loc="lower right", facecolor=BG_COLOUR, edgecolor=TEXT_COLOUR, labelcolor=TEXT_COLOUR)
+            self.ax_vel.legend(loc="lower right", facecolor=BG_COLOUR, edgecolor=TEXT_COLOUR, labelcolor=TEXT_COLOUR)
             
-        self.ax.xaxis.set_major_locator(MaxNLocator(integer=True))
-        
-        self.canvas.draw()
+        self.annot = self.ax_vel.annotate("", xy=(0,0), xytext=(10,10), textcoords="offset points",
+                                     bbox=dict(boxstyle="round", fc=TOOLTIP_BG, ec=TEXT_COLOUR, alpha=0.9),
+                                     color=TEXT_COLOUR, zorder=10)
+        self.annot.set_visible(False)
+            
+        if x_all:
+            self.ax_resp.bar(x_all, y_response, color=bar_colors, alpha=0.8, width=0.5)
+            self.ax_resp.set_yscale('log') 
+
+        self.canvas_vel.draw()
+        self.canvas_resp.draw()
 
 if __name__ == "__main__":
     root = tk.Tk()

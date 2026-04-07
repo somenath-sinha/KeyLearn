@@ -31,3 +31,23 @@ Basic app
 ### Fixed
 * **Toggle State Sync:** Resolved an underlying bug where the "Show Incorrect Notes" toggle failed to render missed notes on the graph. This was caused by Tkinter's native `tk.BooleanVar` losing reference tracking; state management has been entirely refactored to use standard Python boolean dictionaries.
 * **Graph Styling Persistence:** Fixed a visual glitch where the embedded Matplotlib graph would lose its dark mode styling (background and spines) upon redrawing. Styling properties are now correctly re-injected via `apply_graph_styling()` immediately following the `ax.clear()` command.
+
+## [v1.3.0]
+
+### Added
+* **Target Octaves Selection:** Introduced a dropdown menu (now housed within the Settings window) to set the target number of octaves to hunt.
+* **Completion Logic:** The script now halts MIDI hit registration and displays a "Done!" state once the target number of unique octaves has been played.
+* **Response Time Graph:** Added a secondary, logarithmic bar chart beneath the velocity graph to plot the isolated response time between consecutive note strikes.
+* **Hover Annotations:** Implemented interactive tooltips on the velocity graph to dynamically display exact MIDI velocity values on hover.
+* **Visual Error Feedback:** Added a visual cue for missed notes, rapidly flashing the target note text red.
+* **Accuracy Metric:** Introduced a real-time accuracy percentage tracker within the stats panel.
+* **Individual Graph Visibility Toggles:** Added separate "Velocity: ON/OFF" and "Response: ON/OFF" toggles to independently collapse and hide each analytics graph.
+
+### Changed
+* **Settings Consolidation:** Renamed the "MIDI Devices" button to "⚙ Settings" and migrated the Octave Target selection dropdown into this popup.
+* **Target Octave Limit:** Reduced the maximum selectable target octaves from 9 to 7, aligning strictly with the physical limits of an 88-key keyboard.
+* **Response Time Formatting:** Replaced standard scientific notation (e.g., $3 \times 10^0$) on the response time y-axis with a custom, human-readable time formatter applied to both major and minor ticks (e.g., 0.5s, 1s, 3s, 1m).
+* **UI Styling:** Overhauled the Combobox rendering style to enforce dark-mode compliance, removing the default cream background.
+
+### Fixed
+* **Spacebar Focus Hijacking:** Resolved an event-bubbling issue where pressing the spacebar activated the last-clicked UI button instead of generating a note.
