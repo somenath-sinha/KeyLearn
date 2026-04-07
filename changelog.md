@@ -1,5 +1,10 @@
 # Changelog
 
+## [v2.3.4] - Mac App Packaging Hotfix
+
+### Fixed
+* **Settings Persistence in Packaged App:** Updated the `user_settings.json` save/load logic to use the user's root home directory (`~/.midi_hunter_settings.json`). This prevents macOS security from crashing the application when it attempts to write settings into its own read-only `.app` bundle after being compiled with PyInstaller.
+
 ## [v2.3.3] - UI Clutter Hotfix
 
 ### Fixed

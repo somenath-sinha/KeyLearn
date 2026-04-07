@@ -2,6 +2,7 @@
 import time
 import random
 import json
+import os
 from config import *
 
 class GameEngine:
@@ -11,6 +12,9 @@ class GameEngine:
         self.octaves = 5
         self.buffer = '200ms'
         self.lowest_c = None
+        
+        # Determine the safe path for user settings across OS and packaged apps
+        self.settings_path = os.path.expanduser('~/.midi_hunter_settings.json')
         
         # Game State
         self.learning_lowest_c = False
@@ -33,7 +37,7 @@ class GameEngine:
 
     def load_settings(self):
         try:
-            with open('user_settings.json', 'r') as f:
+            with open(self.settings_path, 'r') as f:
                 settings = json.load(f)
                 self.mode = settings.get('mode', MODES[-1])
                 self.octaves = int(settings.get('octaves', 5))
@@ -49,7 +53,7 @@ class GameEngine:
             'buffer': self.buffer,
             'lowest_c': self.lowest_c
         }
-        with open('user_settings.json', 'w') as f:
+        with open(self.settings_path, 'w') as f:
             json.dump(settings, f)
 
     def get_target_max(self):
