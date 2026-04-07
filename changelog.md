@@ -65,3 +65,38 @@ Basic app
 * **Log Scale Granularity:** Enhanced the response time graph's y-axis by injecting a custom `FixedLocator`, ensuring visible gradations explicitly between the 1s and 2s intervals (e.g., 1.2s, 1.4s) where response times frequently cluster.
 * **Logarithmic Formatter Override:** Resolved a persistent rendering bug where Matplotlib reverted the response time y-axis to scientific notation (e.g., 10^0) by enforcing the custom human-readable time formatter strictly *after* the logarithmic scale is instantiated on each redraw.
 * **Action Timer Logic & Visual Error Tracking:** Modified the core timing loop so that incorrect notes no longer reset the interval timer, whilst restoring incorrect hits to the response time graph. This creates a visual "struggle stack"—fluffed notes will plot as increasingly tall red bars, culminating in an accurately measured green bar reflecting the total time taken to successfully hunt down the correct octave.
+
+
+# [v2.0.0] - The Curriculum & Architecture Update
+
+### Architecture & Persistence
+* **Modular Refactor:** Completely restructured the monolithic script into a scalable four-module architecture (`main.py`, `config.py`, `midi_engine.py`, `plot_engine.py`) to separate the UI, hardware interfacing, data rendering, and state management.
+* **Persistent Configuration:** Introduced automated local saving via `user_settings.json`. The application now silently saves and reloads the user's preferred Game Mode, Target Octaves, and Chord Timing Buffer between sessions.
+
+### Structured Learning Modes
+* **Game Modes Engine:** Replaced the infinite sandbox with a structured, selectable curriculum:
+  * **Level 1 (Free Hunt):** Focuses on basic spatial awareness. Hand and finger constraints are explicitly disabled.
+  * **Level 2 (Strict Finger):** Focuses on explicit digit targeting. The application dictates exactly which hand and finger must be used.
+  * **Level 3 (Bilateral Chords):** Focuses on simultaneous execution. The user must strike the target note with both hands within a configurable time buffer (50ms to 4s).
+  * **Level 4 (Diatonic Run):** Focuses on sequential dexterity. The application requests a 9-note diatonic run (1-2-3-4-5-4-3-2-1) starting from a specific white key.
+  * **Unlocked Mode:** Retains the original sandbox functionality, allowing manual toggling of Hand and Finger constraints.
+
+### Analytics & Visualizations
+* **Dual Embedded Graphs:** Integrated Matplotlib directly into the Tkinter UI to provide real-time, interactive analytics without opening external windows.
+* **Velocity Tracking:** Plotted as a sequential scatter graph, highlighting correct strikes (green) and missed notes (red).
+* **Response Time Tracking (Log Scale):** Plotted as a sequential bar chart using a logarithmic scale to prevent massive outliers from breaking the visual hierarchy. Formatted with custom, human-readable time ticks (e.g., 0.5s, 1s, 2s).
+* **Penalty Visualisation:** Incorrect notes are now plotted on the response graph as accumulating red bars without resetting the underlying interval stopwatch, creating a visual "struggle stack" until the correct note is struck.
+* **Interactive Tooltips:** Added dynamically updating hover annotations to both graphs to reveal exact velocity integers and precise response times (in seconds or milliseconds).
+* **Accuracy Metric:** Added a real-time percentage tracker mapping correct hits against total keystrokes.
+
+### UI / UX Enhancements
+* **Dark Mode Enforcement:** Overhauled the Tkinter rendering engine using the `clam` theme to completely resolve macOS dark mode conflicts (e.g., invisible text, cream-coloured hover states, and white comboboxes).
+* **Spacebar Binding:** Bound the application's core "next note" progression directly to the Spacebar, enabling entirely hands-free operation across the keyboard. Resolved an event-bubbling issue to ensure the spacebar does not accidentally trigger focused UI buttons.
+* **Dynamic Interface:** The UI now intelligently locks or unlocks the "Hand" and "Finger" UI toggles based on the strictness of the currently selected Game Mode.
+* **Collapsible Analytics:** Added independent "ON/OFF" toggles for both the Velocity and Response Time graphs, allowing the user to collapse the analytics panels to save screen real estate. 
+* **Audio & Visual Feedback:** Fluffs and missed notes immediately trigger a red flash on the target text and simultaneously play the native macOS `Basso.aiff` low-thud alert.
+* **Window Management:** Disabled the maximize button to prevent macOS from hijacking the window into full-screen mode, preserving the intended application proportions.
+
+### MIDI & Hardware Integration
+* **Centralised Settings:** Created a dedicated "⚙ Settings" popup window to consolidate MIDI Device selection, Target Octaves (capped at a realistic 7), Game Mode selection, and Level 3 Timing Buffers.
+* **Auto-Connect:** Implemented functionality to automatically detect and bind to the first available MIDI input device upon application launch.
