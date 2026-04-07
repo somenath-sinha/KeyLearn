@@ -1,5 +1,12 @@
 # Changelog
 
+## [v2.3.1] - UI Reset & Analytics Hotfixes
+
+### Fixed
+* **Live Feedback Reset:** Fixed a UI bug where the "Current Octave" display would persist its value from the previous round. It now correctly resets to "--" upon pressing the spacebar to generate a new target note.
+* **Bilateral Velocity Tracking (Level 3):** Resolved an issue where Level 3 (Bilateral Chords) averaged the velocity of both keystrokes into a single data point. The velocity graph now accurately plots both individual hand velocities simultaneously for a single chord strike (showing two vertical dots), while the underlying line graph smartly tracks the moving average between them to maintain visual flow.
+
+
 ## [v2.3.0] - The Architecture Refactor & UI Polish
 
 ### Added

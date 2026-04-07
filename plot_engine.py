@@ -79,6 +79,7 @@ class PlotEngine:
         self.ax_resp.clear()
         
         x_correct, y_correct = [], []
+        x_line, y_line = [], []
         x_wrong, y_wrong = [], []
         x_all, y_response, bar_colors = [], [], []
         self.bar_data = []
@@ -86,8 +87,18 @@ class PlotEngine:
         for i, hit in enumerate(hit_history):
             hit_index = i + 1
             if hit['type'] == 'correct':
-                x_correct.append(hit_index)
-                y_correct.append(hit['velocity'])
+                # Level 3 tuple support for individual dot rendering
+                if isinstance(hit['velocity'], (list, tuple)):
+                    x_correct.extend([hit_index, hit_index])
+                    y_correct.extend([hit['velocity'][0], hit['velocity'][1]])
+                    x_line.append(hit_index)
+                    y_line.append(sum(hit['velocity']) / 2) # Plot line to average
+                else:
+                    x_correct.append(hit_index)
+                    y_correct.append(hit['velocity'])
+                    x_line.append(hit_index)
+                    y_line.append(hit['velocity'])
+                
                 x_all.append(hit_index)
                 y_response.append(hit['response_time'])
                 bar_colors.append(ACCENT_COLOUR)
@@ -106,8 +117,9 @@ class PlotEngine:
         self.bars = []
         self.bars_sync = []
         
+        if x_line:
+            self.ax_vel.plot(x_line, y_line, color=ACCENT_COLOUR, alpha=0.4, zorder=1)
         if x_correct:
-            self.ax_vel.plot(x_correct, y_correct, color=ACCENT_COLOUR, alpha=0.4, zorder=1)
             self.sc_correct = self.ax_vel.scatter(x_correct, y_correct, color=ACCENT_COLOUR, s=50, zorder=2, label="Target Note")
             
         if x_wrong:
@@ -119,7 +131,6 @@ class PlotEngine:
         if x_all:
             self.bars = self.ax_resp.bar(x_all, y_response, color=bar_colors, alpha=0.8, width=0.5)
             
-            # Overlay Sync Bars for L3
             x_sync, y_sync = [], []
             for d in self.bar_data:
                 if d['sync']:

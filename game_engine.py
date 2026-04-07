@@ -253,8 +253,8 @@ class GameEngine:
                 sync_delta = current_time - self.l3_pending_time
                 if sync_delta <= buffer_limit and octave != self.l3_pending_octave:
                     self.action_timer = current_time
-                    avg_vel = (self.l3_pending_velocity + msg.velocity) / 2
-                    self._record_correct(avg_vel, response_time, sync_delta)
+                    # Pass both velocities as a tuple instead of averaging
+                    self._record_correct((self.l3_pending_velocity, msg.velocity), response_time, sync_delta)
                     
                     self.octaves_played.add(min(octave, self.l3_pending_octave))
                     self.l3_pending_time = None 

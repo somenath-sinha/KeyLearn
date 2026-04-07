@@ -60,7 +60,6 @@ class MidiGameApp:
         header_frame = ttk.Frame(self.main_frame)
         header_frame.pack(fill=tk.X, pady=(0, 15))
         
-        # --- New Live Mode Display ---
         self.mode_disp = ttk.Label(header_frame, text=self.engine.mode, font=("Helvetica", 14, "bold"), foreground=ACCENT_COLOUR)
         self.mode_disp.pack(side=tk.LEFT)
         
@@ -226,7 +225,6 @@ class MidiGameApp:
             self.engine.buffer = buffer_var.get()
             self.engine.save_settings()
             
-            # Update the UI components
             self.mode_disp.config(text=self.engine.mode)
             self.update_toggle_states()
             self.octave_label.config(text=f"Progress: {len(self.engine.octaves_played)} / {self.engine.get_target_max()}")
@@ -293,6 +291,7 @@ class MidiGameApp:
         self.acc_label.config(text="Accuracy: --")
         self.octave_label.config(text=f"Progress: 0 / {self.engine.get_target_max()}")
         self.error_msg_disp.config(text="") 
+        self.current_octave_disp.config(text="Current Octave: --")
         
         self.note_label.config(text=result['note_text'], fg=TEXT_COLOUR)
         self.inst_part1.config(text=result['inst1'])
