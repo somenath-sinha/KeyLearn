@@ -1,5 +1,23 @@
 # Changelog
 
+## [v2.2.0] - Keyboard Calibration & Logic Refinements
+
+### Added
+* **Live Octave Display:** Added an always-visible UI element that tracks and displays the current physical octave the user's hand is operating in based on their latest keystroke.
+* **Explicit Error Logging:** Introduced a dynamic error readout text box. When a user fluffs a note, the UI now explicitly diagnoses the mistake (e.g., "Played D4, expected G"), immediately clearing the message upon a successful strike.
+* **Keyboard Calibration (Level 4):** Introduced a one-time "Lowest C" calibration step for Level 4. On first load, the app asks the user to press their leftmost C key to learn the exact physical bounds of their specific keyboard. This is saved to `user_settings.json`.
+* **Dynamic Hand Assignment (Level 4):** The app now uses the calibrated keyboard bounds to intelligently determine which hand to use for the Diatonic Run. Notes in the lower half of the keyboard enforce the Left Hand (running downwards), while notes in the upper half enforce the Right Hand (running upwards), ensuring the 9-note sequences never fall off the physical edge of the keys.
+* **Recalibration Setting:** Added a "Recalibrate Lowest C" button inside the Settings menu so users can reset their keyboard bounds if they switch hardware.
+
+### Changed
+* **Octave Offset Correction:** Adjusted the global MIDI-to-Octave mathematical formula from `(msg.note // 12) - 1` to `(msg.note // 12) - 2`. This aligns the application with the Yamaha MIDI standard (where Middle C is C3 rather than C4), correcting the reported "3rd octave detected as 4th" bug.
+* **Level 4 Target Constraints:** A Diatonic Run (Level 4) now only requires a single successful 9-note run (Target = 1) to complete the objective, ignoring the global target octaves setting.
+* **Instruction UI Highlighting:** The specific actionable instruction (e.g., the exact finger, or the target octave) is now dynamically isolated and highlighted in the UI's green Accent Colour for significantly faster visual parsing during high-speed play.
+* **Octave Targeting (Level 4):** Level 4 instructions now explicitly ask for an "Octave X" rather than a "Finger", utilizing the newly corrected octave formula.
+
+### Fixed
+* **Level 3 Octave Scaling Logic:** Explicitly enforced the (Target Octaves - 1) rule for Bilateral Chords, ensuring the objective correctly aligns with simultaneous dual-octave strikes, and hard-locked the minimum selectable octaves to 2 when this mode is active.
+
 ## [v2.1.0] - Enhanced Learning Modes & UI Refinements
 
 ### Added
