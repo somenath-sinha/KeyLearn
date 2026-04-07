@@ -253,8 +253,16 @@ class GameEngine:
                 sync_delta = current_time - self.l3_pending_time
                 if sync_delta <= buffer_limit and octave != self.l3_pending_octave:
                     self.action_timer = current_time
-                    # Pass both velocities as a tuple instead of averaging
-                    self._record_correct((self.l3_pending_velocity, msg.velocity), response_time, sync_delta)
+                    
+                    # Sort by pitch to strictly define (Left Hand, Right Hand)
+                    if octave > self.l3_pending_octave:
+                        vel_left = self.l3_pending_velocity
+                        vel_right = msg.velocity
+                    else:
+                        vel_left = msg.velocity
+                        vel_right = self.l3_pending_velocity
+                        
+                    self._record_correct((vel_left, vel_right), response_time, sync_delta)
                     
                     self.octaves_played.add(min(octave, self.l3_pending_octave))
                     self.l3_pending_time = None 

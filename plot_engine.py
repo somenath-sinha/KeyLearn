@@ -1,7 +1,7 @@
 # plot_engine.py
 from matplotlib.figure import Figure
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
-from matplotlib.ticker import MaxNLocator, FuncFormatter, FixedLocator
+from matplotlib.ticker import MaxNLocator, FuncFormatter, FixedLocator, NullFormatter
 from config import *
 
 class PlotEngine:
@@ -18,8 +18,12 @@ class PlotEngine:
         self.canvas_resp = FigureCanvasTkAgg(self.fig_resp, master=resp_container)
         self.canvas_resp.get_tk_widget().pack(fill="both", expand=True)
 
-        self.sc_correct = None
+        # Separate Scatter Series
+        self.sc_single = None
+        self.sc_L = None
+        self.sc_R = None
         self.sc_wrong = None
+        
         self.bars = []
         self.bars_sync = []
         self.bar_data = []
@@ -64,38 +68,47 @@ class PlotEngine:
         
         self.ax_resp.set_yscale('log')
         formatter = FuncFormatter(self.format_time_ticks)
-        self.ax_resp.yaxis.set_major_formatter(formatter)
-        self.ax_resp.yaxis.set_minor_formatter(formatter)
         
+        # Explicitly define which ticks get text labels to prevent overlapping
+        labeled_ticks = [0.1, 0.5, 1.0, 2.0, 5.0, 10.0, 30.0, 60.0]
+        self.ax_resp.yaxis.set_major_locator(FixedLocator(labeled_ticks))
+        self.ax_resp.yaxis.set_major_formatter(formatter)
+        
+        # Keep granular ticks for visual scale guidance, but mute their text
         custom_minor_ticks = [
-            0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9,
-            1.2, 1.4, 1.6, 1.8, 2.0, 2.5, 3.0, 3.5, 4.0, 4.5, 5.0, 6.0, 7.0, 8.0, 9.0,
-            10, 15, 20, 30, 40, 50, 60
+            0.2, 0.3, 0.4, 0.6, 0.7, 0.8, 0.9,
+            1.5, 3.0, 4.0, 15.0, 20.0, 40.0, 50.0
         ]
         self.ax_resp.yaxis.set_minor_locator(FixedLocator(custom_minor_ticks))
+        self.ax_resp.yaxis.set_minor_formatter(NullFormatter())
 
     def update_plots(self, hit_history, show_wrong):
         self.ax_vel.clear()
         self.ax_resp.clear()
         
-        x_correct, y_correct = [], []
+        x_single, y_single = [], []
+        x_L, y_L = [], []
+        x_R, y_R = [], []
         x_line, y_line = [], []
         x_wrong, y_wrong = [], []
+        
         x_all, y_response, bar_colors = [], [], []
         self.bar_data = []
         
         for i, hit in enumerate(hit_history):
             hit_index = i + 1
             if hit['type'] == 'correct':
-                # Level 3 tuple support for individual dot rendering
                 if isinstance(hit['velocity'], (list, tuple)):
-                    x_correct.extend([hit_index, hit_index])
-                    y_correct.extend([hit['velocity'][0], hit['velocity'][1]])
+                    x_L.append(hit_index)
+                    y_L.append(hit['velocity'][0])
+                    x_R.append(hit_index)
+                    y_R.append(hit['velocity'][1])
+                    
                     x_line.append(hit_index)
-                    y_line.append(sum(hit['velocity']) / 2) # Plot line to average
+                    y_line.append(sum(hit['velocity']) / 2) 
                 else:
-                    x_correct.append(hit_index)
-                    y_correct.append(hit['velocity'])
+                    x_single.append(hit_index)
+                    y_single.append(hit['velocity'])
                     x_line.append(hit_index)
                     y_line.append(hit['velocity'])
                 
@@ -112,21 +125,32 @@ class PlotEngine:
                 bar_colors.append(ERROR_COLOUR)
                 self.bar_data.append({'x': hit_index, 'resp': hit['response_time'], 'sync': None})
                 
-        self.sc_correct = None
+        self.sc_single = None
+        self.sc_L = None
+        self.sc_R = None
         self.sc_wrong = None
         self.bars = []
         self.bars_sync = []
         
         if x_line:
             self.ax_vel.plot(x_line, y_line, color=ACCENT_COLOUR, alpha=0.4, zorder=1)
-        if x_correct:
-            self.sc_correct = self.ax_vel.scatter(x_correct, y_correct, color=ACCENT_COLOUR, s=50, zorder=2, label="Target Note")
+            
+        if x_single:
+            self.sc_single = self.ax_vel.scatter(x_single, y_single, color=ACCENT_COLOUR, s=50, zorder=2, label="Target Note")
+            
+        if x_L:
+            self.sc_L = self.ax_vel.scatter(x_L, y_L, color=ACCENT_COLOUR, s=50, zorder=2)
+            
+        if x_R:
+            self.sc_R = self.ax_vel.scatter(x_R, y_R, color=ACCENT_COLOUR, s=50, zorder=2)
             
         if x_wrong:
             self.sc_wrong = self.ax_vel.scatter(x_wrong, y_wrong, color=ERROR_COLOUR, s=50, marker='x', zorder=3, label="Missed Note")
             
-        if x_correct or x_wrong:
-            self.ax_vel.legend(loc="lower right", facecolor=BG_COLOUR, edgecolor=TEXT_COLOUR, labelcolor=TEXT_COLOUR)
+        if x_single or x_wrong or x_L:
+            handles, labels = self.ax_vel.get_legend_handles_labels()
+            by_label = dict(zip(labels, handles))
+            self.ax_vel.legend(by_label.values(), by_label.keys(), loc="lower right", facecolor=BG_COLOUR, edgecolor=TEXT_COLOUR, labelcolor=TEXT_COLOUR)
             
         if x_all:
             self.bars = self.ax_resp.bar(x_all, y_response, color=bar_colors, alpha=0.8, width=0.5)
@@ -155,25 +179,51 @@ class PlotEngine:
     def on_hover_vel(self, event):
         vis = self.annot_vel.get_visible()
         if event.inaxes == self.ax_vel:
-            cont_c, ind_c = self.sc_correct.contains(event) if self.sc_correct else (False, {})
-            cont_w, ind_w = self.sc_wrong.contains(event) if self.sc_wrong else (False, {})
+            found = False
             
-            if cont_c:
-                pos = self.sc_correct.get_offsets()[ind_c["ind"][0]]
-                self.annot_vel.xy = pos
-                self.annot_vel.set_text(f"Vel: {int(pos[1])}")
-                self.annot_vel.set_visible(True)
-                self.canvas_vel.draw_idle()
-            elif cont_w:
-                pos = self.sc_wrong.get_offsets()[ind_w["ind"][0]]
-                self.annot_vel.xy = pos
-                self.annot_vel.set_text(f"Vel: {int(pos[1])}")
-                self.annot_vel.set_visible(True)
-                self.canvas_vel.draw_idle()
-            else:
-                if vis:
-                    self.annot_vel.set_visible(False)
+            if self.sc_L:
+                cont, ind = self.sc_L.contains(event)
+                if cont:
+                    pos = self.sc_L.get_offsets()[ind["ind"][0]]
+                    self.annot_vel.xy = pos
+                    self.annot_vel.set_text(f"L Vel: {int(pos[1])}")
+                    self.annot_vel.set_visible(True)
                     self.canvas_vel.draw_idle()
+                    found = True
+                    
+            if not found and self.sc_R:
+                cont, ind = self.sc_R.contains(event)
+                if cont:
+                    pos = self.sc_R.get_offsets()[ind["ind"][0]]
+                    self.annot_vel.xy = pos
+                    self.annot_vel.set_text(f"R Vel: {int(pos[1])}")
+                    self.annot_vel.set_visible(True)
+                    self.canvas_vel.draw_idle()
+                    found = True
+                    
+            if not found and self.sc_single:
+                cont, ind = self.sc_single.contains(event)
+                if cont:
+                    pos = self.sc_single.get_offsets()[ind["ind"][0]]
+                    self.annot_vel.xy = pos
+                    self.annot_vel.set_text(f"Vel: {int(pos[1])}")
+                    self.annot_vel.set_visible(True)
+                    self.canvas_vel.draw_idle()
+                    found = True
+                    
+            if not found and self.sc_wrong:
+                cont, ind = self.sc_wrong.contains(event)
+                if cont:
+                    pos = self.sc_wrong.get_offsets()[ind["ind"][0]]
+                    self.annot_vel.xy = pos
+                    self.annot_vel.set_text(f"Vel: {int(pos[1])}")
+                    self.annot_vel.set_visible(True)
+                    self.canvas_vel.draw_idle()
+                    found = True
+
+            if not found and vis:
+                self.annot_vel.set_visible(False)
+                self.canvas_vel.draw_idle()
 
     def on_hover_resp(self, event):
         vis = self.annot_resp.get_visible()

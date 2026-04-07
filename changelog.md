@@ -1,5 +1,15 @@
 # Changelog
 
+## [v2.3.3] - UI Clutter Hotfix
+
+### Fixed
+* **Response Graph Axis Clutter:** Fixed a visual bug on the Response Time graph where forcing a custom text formatter onto every single minor logarithmic tick (e.g., 0.1s, 0.2s, 0.3s) caused massive text overlapping on the Y-axis. The graph now uses a targeted `FixedLocator` to strictly label only the most readable intervals (0.1s, 0.5s, 1s, 2s, 5s, etc.) while keeping the textless minor tick marks for visual guidance.
+
+## [v2.3.2] - Level 3 Analytics Fix
+
+### Fixed
+* **Bilateral Velocity Tooltips:** Resolved an issue where Level 3 (Bilateral Chords) averaged the velocity of both keystrokes or left them ambiguously labeled. The engine now dynamically assigns the lower-octave note to the Left Hand and the higher-octave note to the Right Hand. These are plotted as two entirely separate data series, allowing the interactive tooltips to explicitly read "L Vel" and "R Vel" when hovering over the respective dots.
+
 ## [v2.3.1] - UI Reset & Analytics Hotfixes
 
 ### Fixed
