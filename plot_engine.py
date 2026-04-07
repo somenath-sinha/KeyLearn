@@ -6,35 +6,31 @@ from config import *
 
 class PlotEngine:
     def __init__(self, vel_container, resp_container):
-        # Velocity Graph
         self.fig_vel = Figure(figsize=(5, 2.75), dpi=100)
         self.fig_vel.patch.set_facecolor(BG_COLOUR)
         self.ax_vel = self.fig_vel.add_subplot(111)
         self.canvas_vel = FigureCanvasTkAgg(self.fig_vel, master=vel_container)
         self.canvas_vel.get_tk_widget().pack(fill="both", expand=True)
 
-        # Response Graph
         self.fig_resp = Figure(figsize=(5, 2.75), dpi=100)
         self.fig_resp.patch.set_facecolor(BG_COLOUR)
         self.ax_resp = self.fig_resp.add_subplot(111)
         self.canvas_resp = FigureCanvasTkAgg(self.fig_resp, master=resp_container)
         self.canvas_resp.get_tk_widget().pack(fill="both", expand=True)
 
-        # State vars for hover
         self.sc_correct = None
         self.sc_wrong = None
         self.bars = []
+        self.bars_sync = []
+        self.bar_data = []
 
-        # Tooltips
         self.annot_vel = self.ax_vel.annotate("", xy=(0,0), xytext=(10,10), textcoords="offset points",
-                                     bbox=dict(boxstyle="round", fc=TOOLTIP_BG, ec=TEXT_COLOUR, alpha=0.9),
-                                     color=TEXT_COLOUR, zorder=10)
+                                     bbox=dict(boxstyle="round", fc=TOOLTIP_BG, ec=TEXT_COLOUR, alpha=0.9), color=TEXT_COLOUR, zorder=10)
         self.annot_vel.set_visible(False)
         self.canvas_vel.mpl_connect("motion_notify_event", self.on_hover_vel)
 
         self.annot_resp = self.ax_resp.annotate("", xy=(0,0), xytext=(0,10), textcoords="offset points",
-                                     bbox=dict(boxstyle="round", fc=TOOLTIP_BG, ec=TEXT_COLOUR, alpha=0.9),
-                                     color=TEXT_COLOUR, zorder=10, ha='center')
+                                     bbox=dict(boxstyle="round", fc=TOOLTIP_BG, ec=TEXT_COLOUR, alpha=0.9), color=TEXT_COLOUR, zorder=10, ha='center')
         self.annot_resp.set_visible(False)
         self.canvas_resp.mpl_connect("motion_notify_event", self.on_hover_resp)
 
@@ -44,7 +40,6 @@ class PlotEngine:
         return "0s"
 
     def apply_styling(self):
-        # Velocity
         self.ax_vel.set_facecolor('#1E2227') 
         self.ax_vel.spines['top'].set_visible(False)
         self.ax_vel.spines['right'].set_visible(False)
@@ -56,7 +51,6 @@ class PlotEngine:
         self.ax_vel.set_ylim(0, 130)
         self.ax_vel.set_ylabel("Velocity", color=TEXT_COLOUR)
         
-        # Response
         self.ax_resp.set_facecolor('#1E2227') 
         self.ax_resp.spines['top'].set_visible(False)
         self.ax_resp.spines['right'].set_visible(False)
@@ -87,6 +81,7 @@ class PlotEngine:
         x_correct, y_correct = [], []
         x_wrong, y_wrong = [], []
         x_all, y_response, bar_colors = [], [], []
+        self.bar_data = []
         
         for i, hit in enumerate(hit_history):
             hit_index = i + 1
@@ -96,6 +91,7 @@ class PlotEngine:
                 x_all.append(hit_index)
                 y_response.append(hit['response_time'])
                 bar_colors.append(ACCENT_COLOUR)
+                self.bar_data.append({'x': hit_index, 'resp': hit['response_time'], 'sync': hit.get('sync_time')})
                 
             elif hit['type'] == 'wrong' and show_wrong:
                 x_wrong.append(hit_index)
@@ -103,10 +99,12 @@ class PlotEngine:
                 x_all.append(hit_index)
                 y_response.append(hit['response_time'])
                 bar_colors.append(ERROR_COLOUR)
+                self.bar_data.append({'x': hit_index, 'resp': hit['response_time'], 'sync': None})
                 
         self.sc_correct = None
         self.sc_wrong = None
         self.bars = []
+        self.bars_sync = []
         
         if x_correct:
             self.ax_vel.plot(x_correct, y_correct, color=ACCENT_COLOUR, alpha=0.4, zorder=1)
@@ -120,10 +118,18 @@ class PlotEngine:
             
         if x_all:
             self.bars = self.ax_resp.bar(x_all, y_response, color=bar_colors, alpha=0.8, width=0.5)
+            
+            # Overlay Sync Bars for L3
+            x_sync, y_sync = [], []
+            for d in self.bar_data:
+                if d['sync']:
+                    x_sync.append(d['x'])
+                    y_sync.append(d['sync'])
+            if x_sync:
+                self.bars_sync = self.ax_resp.bar(x_sync, y_sync, color=SYNC_COLOUR, alpha=1.0, width=0.2)
 
         self.apply_styling() 
 
-        # Re-initialize annotations after clear
         self.annot_vel = self.ax_vel.annotate("", xy=(0,0), xytext=(10,10), textcoords="offset points",
                                      bbox=dict(boxstyle="round", fc=TOOLTIP_BG, ec=TEXT_COLOUR, alpha=0.9), color=TEXT_COLOUR, zorder=10)
         self.annot_vel.set_visible(False)
@@ -165,14 +171,20 @@ class PlotEngine:
             for bar in self.bars:
                 cont, _ = bar.contains(event)
                 if cont:
-                    height = bar.get_height()
-                    text = f"{height:.2f}s" if height >= 1 else f"{height*1000:.0f}ms"
-                    self.annot_resp.xy = (bar.get_x() + bar.get_width() / 2, height)
-                    self.annot_resp.set_text(text)
-                    self.annot_resp.set_visible(True)
-                    self.canvas_resp.draw_idle()
-                    hovered = True
-                    break
+                    x_val = bar.get_x() + bar.get_width() / 2
+                    bd = next((d for d in self.bar_data if abs(d['x'] - x_val) < 0.1), None)
+                    if bd:
+                        text = f"Resp: {bd['resp']:.2f}s"
+                        if bd['sync']:
+                            text += f"\nSync: {bd['sync']*1000:.0f}ms"
+                        
+                        height = bar.get_height()
+                        self.annot_resp.xy = (x_val, height)
+                        self.annot_resp.set_text(text)
+                        self.annot_resp.set_visible(True)
+                        self.canvas_resp.draw_idle()
+                        hovered = True
+                        break
             if not hovered and vis:
                 self.annot_resp.set_visible(False)
                 self.canvas_resp.draw_idle()

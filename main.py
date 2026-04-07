@@ -22,14 +22,12 @@ class MidiGameApp:
         self.main_frame = ttk.Frame(self.root, padding="20 20 20 20")
         self.main_frame.pack(fill=tk.BOTH, expand=True)
 
-        # Persistent Settings Variables
         self.current_mode_var = tk.StringVar()
         self.octave_target_var = tk.StringVar()
         self.buffer_var = tk.StringVar()
         
         self.load_settings()
 
-        # Game State
         self.target_note_idx = None
         self.start_time = None
         self.first_hit_time = None
@@ -38,7 +36,6 @@ class MidiGameApp:
         self.hit_history = [] 
         self.octaves_played = set()
         
-        # Level Specific Trackers
         self.l3_pending_time = None
         self.l3_pending_octave = None
         self.l3_pending_velocity = None
@@ -116,8 +113,14 @@ class MidiGameApp:
 
         self.note_label = tk.Label(self.main_frame, text="Ready?", font=("Helvetica", 54, "bold"), bg=BG_COLOUR, fg=TEXT_COLOUR)
         self.note_label.pack(pady=10)
-        self.instruction_label = ttk.Label(self.main_frame, text="Press Spacebar to start", font=("Helvetica", 16))
-        self.instruction_label.pack(pady=5)
+        
+        # Split Instruction Frame for Color Highlighting
+        self.inst_frame = ttk.Frame(self.main_frame)
+        self.inst_frame.pack(pady=5)
+        self.inst_part1 = ttk.Label(self.inst_frame, text="Press Spacebar to start", font=("Helvetica", 16))
+        self.inst_part1.pack(side=tk.LEFT)
+        self.inst_part2 = ttk.Label(self.inst_frame, text="", font=("Helvetica", 16, "bold"), foreground=ACCENT_COLOUR)
+        self.inst_part2.pack(side=tk.LEFT)
 
         stats_frame = ttk.Frame(self.main_frame)
         stats_frame.pack(fill=tk.X, pady=10)
@@ -127,7 +130,7 @@ class MidiGameApp:
         self.avg_time_label.pack(side=tk.LEFT, expand=True)
         self.acc_label = ttk.Label(stats_frame, text="Accuracy: --", font=("Helvetica", 12))
         self.acc_label.pack(side=tk.LEFT, expand=True)
-        self.octave_label = ttk.Label(stats_frame, text=f"Progress: 0 / {self.octave_target_var.get()}", font=("Helvetica", 12))
+        self.octave_label = ttk.Label(stats_frame, text=f"Progress: 0 / {self._get_target_max()}", font=("Helvetica", 12))
         self.octave_label.pack(side=tk.RIGHT, expand=True)
 
         self.next_btn = ttk.Button(self.main_frame, text="Give me a Note! (Spacebar)", command=self.next_note, takefocus=False)
@@ -155,13 +158,18 @@ class MidiGameApp:
         self.trigger_plot_update()
 
     def update_toggle_states(self):
-        """Disables manual toggle buttons if a structured Level is active"""
         if self.current_mode_var.get() == 'Unlocked Mode':
             self.hand_btn.config(state=tk.NORMAL)
             self.finger_btn.config(state=tk.NORMAL)
         else:
             self.hand_btn.config(state=tk.DISABLED)
             self.finger_btn.config(state=tk.DISABLED)
+
+    def _get_target_max(self):
+        base_octaves = int(self.octave_target_var.get())
+        if self.current_mode_var.get() == 'Level 3: Bilateral Chords':
+            return max(1, base_octaves - 1)
+        return base_octaves
 
     def handle_spacebar(self, event):
         self.next_note()
@@ -188,31 +196,42 @@ class MidiGameApp:
     def open_settings_window(self):
         set_win = tk.Toplevel(self.root)
         set_win.title("Settings")
-        set_win.geometry("380x320")
+        set_win.geometry("450x380")
         set_win.configure(bg=BG_COLOUR)
         
         frame = ttk.Frame(set_win, padding="20")
         frame.pack(fill=tk.BOTH, expand=True)
 
-        # Mode Selection
         ttk.Label(frame, text="Game Mode:", font=("Helvetica", 12)).pack(anchor=tk.W)
         mode_dropdown = ttk.Combobox(frame, textvariable=self.current_mode_var, state="readonly", takefocus=False)
         mode_dropdown['values'] = MODES
-        mode_dropdown.pack(fill=tk.X, pady=(0, 10))
+        mode_dropdown.pack(fill=tk.X, pady=(0, 5))
 
-        # Octave Selection
+        rules_label = tk.Label(frame, text="", bg=BG_COLOUR, fg=TEXT_COLOUR, wraplength=400, justify=tk.LEFT)
+        rules_label.pack(fill=tk.X, pady=(0, 10))
+
         ttk.Label(frame, text="Target Actions (Octaves/Runs):", font=("Helvetica", 12)).pack(anchor=tk.W)
         oct_dropdown = ttk.Combobox(frame, textvariable=self.octave_target_var, state="readonly", takefocus=False)
-        oct_dropdown['values'] = [str(i) for i in range(1, 8)] 
         oct_dropdown.pack(fill=tk.X, pady=(0, 10))
 
-        # Level 3 Chord Buffer
+        def update_rules(event=None):
+            mode = self.current_mode_var.get()
+            rules_label.config(text=LEVEL_RULES.get(mode, ""))
+            if mode == 'Level 3: Bilateral Chords':
+                oct_dropdown['values'] = [str(i) for i in range(2, 8)]
+                if self.octave_target_var.get() == "1":
+                    self.octave_target_var.set("2")
+            else:
+                oct_dropdown['values'] = [str(i) for i in range(1, 8)]
+        
+        mode_dropdown.bind('<<ComboboxSelected>>', update_rules)
+        update_rules()
+
         ttk.Label(frame, text="Level 3 Chord Timing Buffer:", font=("Helvetica", 12)).pack(anchor=tk.W)
         buffer_dropdown = ttk.Combobox(frame, textvariable=self.buffer_var, state="readonly", takefocus=False)
         buffer_dropdown['values'] = list(BUFFER_TIMES.keys())
         buffer_dropdown.pack(fill=tk.X, pady=(0, 10))
 
-        # MIDI Selection
         ttk.Label(frame, text="MIDI Input Device:", font=("Helvetica", 12)).pack(anchor=tk.W)
         port_var = tk.StringVar()
         midi_dropdown = ttk.Combobox(frame, textvariable=port_var, state="readonly", takefocus=False)
@@ -228,7 +247,7 @@ class MidiGameApp:
             self.connect_midi(port_var.get())
             self.save_settings()
             self.update_toggle_states()
-            self.octave_label.config(text=f"Progress: {len(self.octaves_played)} / {self.octave_target_var.get()}")
+            self.octave_label.config(text=f"Progress: {len(self.octaves_played)} / {self._get_target_max()}")
             set_win.destroy()
 
         ttk.Button(frame, text="Save & Close", command=apply_and_close, takefocus=False).pack(fill=tk.X)
@@ -247,7 +266,7 @@ class MidiGameApp:
     def flash_error(self):
         if self.note_label.cget("text") != "Done!":
             self.note_label.config(fg=ERROR_COLOUR)
-            self.root.after(250, lambda: self.note_label.config(fg=TEXT_COLOUR) if len(self.octaves_played) < int(self.octave_target_var.get()) else None)
+            self.root.after(250, lambda: self.note_label.config(fg=TEXT_COLOUR) if len(self.octaves_played) < self._get_target_max() else None)
 
     def calculate_accuracy(self):
         total = len(self.hit_history)
@@ -257,7 +276,7 @@ class MidiGameApp:
 
     def process_midi_msg(self, msg):
         if self.target_note_idx is None: return
-        target_max = int(self.octave_target_var.get())
+        target_max = self._get_target_max()
         if len(self.octaves_played) >= target_max: return 
 
         note_idx = msg.note % 12
@@ -295,7 +314,8 @@ class MidiGameApp:
             
             if len(self.octaves_played) >= target_max:
                 self.note_label.config(text="Done!", fg=ACCENT_COLOUR)
-                self.instruction_label.config(text="Press Spacebar for next objective")
+                self.inst_part1.config(text="Press Spacebar for next note")
+                self.inst_part2.config(text="")
         else:
             self.hit_history.append({'type': 'wrong', 'velocity': msg.velocity, 'response_time': response_time})
             self.flash_error()
@@ -310,16 +330,19 @@ class MidiGameApp:
                 self.l3_pending_octave = octave
                 self.l3_pending_velocity = msg.velocity
             else:
-                if current_time - self.l3_pending_time <= buffer_limit and octave != self.l3_pending_octave:
+                sync_delta = current_time - self.l3_pending_time
+                if sync_delta <= buffer_limit and octave != self.l3_pending_octave:
                     self.action_timer = current_time
                     avg_vel = (self.l3_pending_velocity + msg.velocity) / 2
-                    self.hit_history.append({'type': 'correct', 'velocity': avg_vel, 'response_time': response_time})
-                    self.octaves_played.add(octave)
+                    self.hit_history.append({'type': 'correct', 'velocity': avg_vel, 'response_time': response_time, 'sync_time': sync_delta})
+                    
+                    self.octaves_played.add(min(octave, self.l3_pending_octave))
                     self.l3_pending_time = None 
                     
                     if len(self.octaves_played) >= target_max:
                         self.note_label.config(text="Done!", fg=ACCENT_COLOUR)
-                        self.instruction_label.config(text="Press Spacebar for next objective")
+                        self.inst_part1.config(text="Press Spacebar for next note")
+                        self.inst_part2.config(text="")
                 else:
                     self.hit_history.append({'type': 'wrong', 'velocity': msg.velocity, 'response_time': response_time})
                     self.flash_error()
@@ -334,9 +357,9 @@ class MidiGameApp:
             os.system("afplay /System/Library/Sounds/Basso.aiff &")
 
     def _handle_level_4(self, msg, note_idx, octave, current_time, response_time, target_max):
-        expected_idx = self.l4_sequence[self.l4_progress]
+        expected_midi = self.l4_sequence[self.l4_progress]
         
-        if note_idx == expected_idx:
+        if msg.note == expected_midi:
             self.action_timer = current_time
             if self.first_hit_time is None:
                 self.first_hit_time = current_time
@@ -351,7 +374,8 @@ class MidiGameApp:
                 self.l4_progress = 0 
                 if len(self.octaves_played) >= target_max:
                     self.note_label.config(text="Done!", fg=ACCENT_COLOUR)
-                    self.instruction_label.config(text="Press Spacebar for next objective")
+                    self.inst_part1.config(text="Press Spacebar for next note")
+                    self.inst_part2.config(text="")
             
             self.octave_label.config(text=f"Progress: {len(self.octaves_played)} / {target_max}")
         else:
@@ -359,15 +383,16 @@ class MidiGameApp:
             self.flash_error()
             os.system("afplay /System/Library/Sounds/Basso.aiff &")
 
-    def _generate_diatonic(self, start_idx, up=True):
-        idx_in_white = WHITE_NOTE_INDICES.index(start_idx)
-        seq = []
-        for i in range(5):
-            curr_idx = (idx_in_white + (i if up else -i)) % 7
-            seq.append(WHITE_NOTE_INDICES[curr_idx])
+    def _generate_diatonic(self, start_midi, up=True):
+        seq = [start_midi]
+        curr = start_midi
+        for _ in range(4):
+            curr += 1 if up else -1
+            while (curr % 12) not in WHITE_NOTE_INDICES:
+                curr += 1 if up else -1
+            seq.append(curr)
         for i in range(3, -1, -1):
-            curr_idx = (idx_in_white + (i if up else -i)) % 7
-            seq.append(WHITE_NOTE_INDICES[curr_idx])
+            seq.append(seq[i])
         return seq
 
     def next_note(self):
@@ -382,41 +407,78 @@ class MidiGameApp:
         self.time_label.config(text="1st Hit: --")
         self.avg_time_label.config(text="Avg Interval: --")
         self.acc_label.config(text="Accuracy: --")
-        self.octave_label.config(text=f"Progress: 0 / {self.octave_target_var.get()}")
+        self.octave_label.config(text=f"Progress: 0 / {self._get_target_max()}")
+
+        prev_note = self.target_note_idx
 
         if mode == 'Level 4: Diatonic Run':
-            start_idx = random.choice(WHITE_NOTE_INDICES)
-            self.target_note_idx = start_idx
-            self.note_label.config(text=NOTES[start_idx], fg=TEXT_COLOUR)
-            hand = random.choice(HANDS)
-            up = (hand == 'Right Hand')
-            self.l4_sequence = self._generate_diatonic(start_idx, up)
+            octaves = int(self.octave_target_var.get())
+            min_midi = 60 - (octaves // 2) * 12
+            max_midi = 60 + ((octaves + 1) // 2) * 12 - 1 
+            
+            while True:
+                start_midi = random.randint(min_midi, max_midi)
+                idx = start_midi % 12
+                if idx not in WHITE_NOTE_INDICES: continue
+                if idx == prev_note: continue
+
+                up = start_midi >= 60
+                seq = self._generate_diatonic(start_midi, up)
+                if all(min_midi <= n <= max_midi for n in seq):
+                    self.target_note_idx = idx
+                    self.l4_sequence = seq
+                    start_octave = (start_midi // 12) - 1
+                    hand = "Right Hand" if up else "Left Hand"
+                    self.inst_part1.config(text=f"{hand} | ")
+                    self.inst_part2.config(text=f"Octave {start_octave}")
+                    break
             self.l4_progress = 0
-            self.instruction_label.config(text=f"{hand} | Run {'Up' if up else 'Down'} 1-5-1")
+            self.note_label.config(text=NOTES[self.target_note_idx], fg=TEXT_COLOUR)
 
         elif mode == 'Level 3: Bilateral Chords':
-            self.target_note_idx = random.randint(0, 11)
+            while True:
+                nxt = random.randint(0, 11)
+                if nxt != prev_note: break
+            self.target_note_idx = nxt
             self.note_label.config(text=NOTES[self.target_note_idx], fg=TEXT_COLOUR)
             self.l3_pending_time = None
-            self.instruction_label.config(text="Both Hands Simultaneously")
+            self.inst_part1.config(text="Both Hands | ")
+            self.inst_part2.config(text="Simultaneously")
 
         elif mode == 'Level 2: Strict Finger':
-            self.target_note_idx = random.randint(0, 11)
+            while True:
+                nxt = random.randint(0, 11)
+                if nxt != prev_note: break
+            self.target_note_idx = nxt
             self.note_label.config(text=NOTES[self.target_note_idx], fg=TEXT_COLOUR)
-            self.instruction_label.config(text=f"{random.choice(HANDS)} | {random.choice(FINGERS)}")
+            self.inst_part1.config(text=f"{random.choice(HANDS)} | ")
+            self.inst_part2.config(text=f"{random.choice(FINGERS)}")
 
         elif mode == 'Level 1: Free Hunt':
-            self.target_note_idx = random.randint(0, 11)
+            while True:
+                nxt = random.randint(0, 11)
+                if nxt != prev_note: break
+            self.target_note_idx = nxt
             self.note_label.config(text=NOTES[self.target_note_idx], fg=TEXT_COLOUR)
-            self.instruction_label.config(text="Any Hand | Any Finger")
+            self.inst_part1.config(text="Any Hand | ")
+            self.inst_part2.config(text="Any Finger")
 
         else: # Unlocked Mode
-            self.target_note_idx = random.randint(0, 11)
+            while True:
+                nxt = random.randint(0, 11)
+                if nxt != prev_note: break
+            self.target_note_idx = nxt
             self.note_label.config(text=NOTES[self.target_note_idx], fg=TEXT_COLOUR)
-            instructions = []
-            if self.toggles['hand']: instructions.append(random.choice(HANDS))
-            if self.toggles['finger']: instructions.append(random.choice(FINGERS))
-            self.instruction_label.config(text=" | ".join(instructions) if instructions else "Any Hand | Any Finger")
+            
+            p1, p2 = "", ""
+            if self.toggles['hand']: p1 = f"{random.choice(HANDS)} | "
+            if self.toggles['finger']: p2 = f"{random.choice(FINGERS)}"
+            
+            if not p1 and not p2:
+                p1 = "Any Hand | Any Finger"
+            
+            self.inst_part1.config(text=p1)
+            self.inst_part2.config(text=p2)
         
         self.trigger_plot_update()
 
