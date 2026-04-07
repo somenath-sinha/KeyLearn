@@ -7,7 +7,7 @@ import queue
 import os
 from matplotlib.figure import Figure
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
-from matplotlib.ticker import MaxNLocator, FuncFormatter
+from matplotlib.ticker import MaxNLocator, FuncFormatter, FixedLocator
 
 NOTES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
 HANDS = ['Left Hand', 'Right Hand']
@@ -26,8 +26,10 @@ class MidiGameApp:
     def __init__(self, root):
         self.root = root
         self.root.title("MIDI Note Hunter Pro")
-        self.root.minsize(600, 300) 
         self.root.configure(bg=BG_COLOUR)
+        
+        # Disables the macOS maximize button
+        self.root.resizable(False, False)
         
         style = ttk.Style()
         if 'clam' in style.theme_names():
@@ -41,7 +43,6 @@ class MidiGameApp:
             style.configure('Toggle.TButton', background=TOGGLE_ON, foreground='#ffffff', font=('Helvetica', 10, 'bold'))
             style.map('Toggle.TButton', background=[('active', '#4D8BBE')])
             
-            # Combobox dark mode fix
             style.configure('TCombobox', fieldbackground=BG_COLOUR, background=TOGGLE_OFF, foreground=TEXT_COLOUR, bordercolor=BG_COLOUR, arrowcolor=TEXT_COLOUR)
             style.map('TCombobox', 
                       fieldbackground=[('readonly', BG_COLOUR)],
@@ -137,7 +138,6 @@ class MidiGameApp:
         self.wrong_notes_btn.config(command=lambda: self.toggle_state('wrong_notes', self.wrong_notes_btn, "Show Incorrect Notes", self.update_plots))
         self.wrong_notes_btn.pack(side=tk.LEFT)
 
-        # Individual Graph Toggles
         self.resp_graphs_btn = ttk.Button(graph_ctrl_frame, text="Response: ON", style='Toggle.TButton', takefocus=False)
         self.resp_graphs_btn.config(command=lambda: self.toggle_graph_visibility('show_resp_graph', self.resp_graphs_btn, "Response", self.graph_container_resp))
         self.resp_graphs_btn.pack(side=tk.RIGHT, padx=(10, 0))
@@ -146,7 +146,7 @@ class MidiGameApp:
         self.vel_graphs_btn.config(command=lambda: self.toggle_graph_visibility('show_vel_graph', self.vel_graphs_btn, "Velocity", self.graph_container_vel))
         self.vel_graphs_btn.pack(side=tk.RIGHT)
 
-        # --- Embedded Graphs Containers (Split into two for independent collapsing) ---
+        # --- Velocity Graph Container ---
         self.graph_container_vel = ttk.Frame(self.main_frame)
         self.graph_container_vel.pack(fill=tk.BOTH, expand=True)
 
@@ -156,6 +156,7 @@ class MidiGameApp:
         self.canvas_vel = FigureCanvasTkAgg(self.fig_vel, master=self.graph_container_vel)
         self.canvas_vel.get_tk_widget().pack(fill=tk.BOTH, expand=True)
 
+        # --- Response Graph Container ---
         self.graph_container_resp = ttk.Frame(self.main_frame)
         self.graph_container_resp.pack(fill=tk.BOTH, expand=True)
 
@@ -165,15 +166,12 @@ class MidiGameApp:
         self.canvas_resp = FigureCanvasTkAgg(self.fig_resp, master=self.graph_container_resp)
         self.canvas_resp.get_tk_widget().pack(fill=tk.BOTH, expand=True)
         
-        # Tooltip
-        self.annot = self.ax_vel.annotate("", xy=(0,0), xytext=(10,10), textcoords="offset points",
-                                     bbox=dict(boxstyle="round", fc=TOOLTIP_BG, ec=TEXT_COLOUR, alpha=0.9),
-                                     color=TEXT_COLOUR, zorder=10)
-        self.annot.set_visible(False)
-        self.canvas_vel.mpl_connect("motion_notify_event", self.on_hover)
+        self.canvas_vel.mpl_connect("motion_notify_event", self.on_hover_vel)
+        self.canvas_resp.mpl_connect("motion_notify_event", self.on_hover_resp)
         
         self.sc_correct = None
         self.sc_wrong = None
+        self.bars = []
         
         self.update_plots() 
 
@@ -193,51 +191,89 @@ class MidiGameApp:
             return f"{x:g}s"
         return "0s"
 
-    def on_hover(self, event):
-        vis = self.annot.get_visible()
+    def on_hover_vel(self, event):
+        vis = self.annot_vel.get_visible()
         if event.inaxes == self.ax_vel:
             cont_c, ind_c = self.sc_correct.contains(event) if self.sc_correct else (False, {})
             cont_w, ind_w = self.sc_wrong.contains(event) if self.sc_wrong else (False, {})
             
             if cont_c:
                 pos = self.sc_correct.get_offsets()[ind_c["ind"][0]]
-                self.annot.xy = pos
-                self.annot.set_text(f"Vel: {int(pos[1])}")
-                self.annot.set_visible(True)
+                self.annot_vel.xy = pos
+                self.annot_vel.set_text(f"Vel: {int(pos[1])}")
+                self.annot_vel.set_visible(True)
                 self.canvas_vel.draw_idle()
             elif cont_w:
                 pos = self.sc_wrong.get_offsets()[ind_w["ind"][0]]
-                self.annot.xy = pos
-                self.annot.set_text(f"Vel: {int(pos[1])}")
-                self.annot.set_visible(True)
+                self.annot_vel.xy = pos
+                self.annot_vel.set_text(f"Vel: {int(pos[1])}")
+                self.annot_vel.set_visible(True)
                 self.canvas_vel.draw_idle()
             else:
                 if vis:
-                    self.annot.set_visible(False)
+                    self.annot_vel.set_visible(False)
                     self.canvas_vel.draw_idle()
 
+    def on_hover_resp(self, event):
+        vis = self.annot_resp.get_visible()
+        if event.inaxes == self.ax_resp:
+            hovered = False
+            if hasattr(self, 'bars') and self.bars:
+                for bar in self.bars:
+                    cont, _ = bar.contains(event)
+                    if cont:
+                        height = bar.get_height()
+                        text = f"{height:.2f}s" if height >= 1 else f"{height*1000:.0f}ms"
+                        self.annot_resp.xy = (bar.get_x() + bar.get_width() / 2, height)
+                        self.annot_resp.set_text(text)
+                        self.annot_resp.set_visible(True)
+                        self.canvas_resp.draw_idle()
+                        hovered = True
+                        break
+            if not hovered and vis:
+                self.annot_resp.set_visible(False)
+                self.canvas_resp.draw_idle()
+        else:
+            if vis:
+                self.annot_resp.set_visible(False)
+                self.canvas_resp.draw_idle()
+
     def apply_graph_styling(self):
-        for ax in [self.ax_vel, self.ax_resp]:
-            ax.set_facecolor('#1E2227') 
-            ax.spines['top'].set_visible(False)
-            ax.spines['right'].set_visible(False)
-            ax.spines['bottom'].set_color(TEXT_COLOUR)
-            ax.spines['left'].set_color(TEXT_COLOUR)
-            ax.tick_params(colors=TEXT_COLOUR, which='both') 
-            ax.xaxis.set_major_locator(MaxNLocator(integer=True))
-            
+        # Velocity Graph Styling
+        self.ax_vel.set_facecolor('#1E2227') 
+        self.ax_vel.spines['top'].set_visible(False)
+        self.ax_vel.spines['right'].set_visible(False)
+        self.ax_vel.spines['bottom'].set_color(TEXT_COLOUR)
+        self.ax_vel.spines['left'].set_color(TEXT_COLOUR)
+        self.ax_vel.tick_params(colors=TEXT_COLOUR, which='both') 
+        self.ax_vel.xaxis.set_major_locator(MaxNLocator(integer=True))
         self.ax_vel.set_title("Velocity Tracking", pad=10, color=TEXT_COLOUR)
         self.ax_vel.set_ylim(0, 130)
         self.ax_vel.set_ylabel("Velocity", color=TEXT_COLOUR)
         
+        # Response Graph Styling
+        self.ax_resp.set_facecolor('#1E2227') 
+        self.ax_resp.spines['top'].set_visible(False)
+        self.ax_resp.spines['right'].set_visible(False)
+        self.ax_resp.spines['bottom'].set_color(TEXT_COLOUR)
+        self.ax_resp.spines['left'].set_color(TEXT_COLOUR)
+        self.ax_resp.tick_params(colors=TEXT_COLOUR, which='both') 
+        self.ax_resp.xaxis.set_major_locator(MaxNLocator(integer=True))
         self.ax_resp.set_title("Response Time Interval (Log Scale)", pad=10, color=TEXT_COLOUR)
         self.ax_resp.set_ylabel("Time", color=TEXT_COLOUR)
         self.ax_resp.set_xlabel("Hit Sequence", color=TEXT_COLOUR)
         
-        # Override Matplotlib's scientific log formatter for both major and minor ticks
+        self.ax_resp.set_yscale('log')
         formatter = FuncFormatter(self.format_time_ticks)
         self.ax_resp.yaxis.set_major_formatter(formatter)
         self.ax_resp.yaxis.set_minor_formatter(formatter)
+        
+        custom_minor_ticks = [
+            0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9,
+            1.2, 1.4, 1.6, 1.8, 2.0, 2.5, 3.0, 3.5, 4.0, 4.5, 5.0, 6.0, 7.0, 8.0, 9.0,
+            10, 15, 20, 30, 40, 50, 60
+        ]
+        self.ax_resp.yaxis.set_minor_locator(FixedLocator(custom_minor_ticks))
 
     def toggle_state(self, key, btn, base_text, callback=None):
         self.toggles[key] = not self.toggles[key]
@@ -261,7 +297,6 @@ class MidiGameApp:
         frame = ttk.Frame(set_win, padding="20")
         frame.pack(fill=tk.BOTH, expand=True)
 
-        # MIDI Select
         ttk.Label(frame, text="Select MIDI Input:", font=("Helvetica", 12)).pack(anchor=tk.W)
         port_var = tk.StringVar()
         dropdown = ttk.Combobox(frame, textvariable=port_var, state="readonly", takefocus=False)
@@ -279,7 +314,6 @@ class MidiGameApp:
             else:
                 dropdown.current(0)
 
-        # Octave Select
         ttk.Label(frame, text="Select number of octaves:", font=("Helvetica", 12)).pack(anchor=tk.W)
         oct_dropdown = ttk.Combobox(frame, textvariable=self.octave_target_var, state="readonly", takefocus=False)
         oct_dropdown['values'] = [str(i) for i in range(1, 8)] 
@@ -340,10 +374,13 @@ class MidiGameApp:
         octave = (msg.note // 12) - 1
         current_time = time.time()
         
+        # Calculates response time from the start of the note, or the last CORRECT hit
         response_time = current_time - self.action_timer
-        self.action_timer = current_time
 
         if note_idx == self.target_note_idx:
+            # ONLY reset the timer if a correct note is hit
+            self.action_timer = current_time
+            
             if self.first_hit_time is None:
                 self.first_hit_time = current_time
                 self.time_label.config(text=f"1st Hit: {response_time:.2f}s")
@@ -362,6 +399,7 @@ class MidiGameApp:
                 self.instruction_label.config(text="Press Spacebar for next note")
             
         else:
+            # Logs the wrong hit for velocity plotting and accuracy, and retains response time for massive red bars!
             self.hit_history.append({'type': 'wrong', 'velocity': msg.velocity, 'response_time': response_time})
             self.flash_error()
             os.system("afplay /System/Library/Sounds/Basso.aiff &")
@@ -400,7 +438,6 @@ class MidiGameApp:
     def update_plots(self):
         self.ax_vel.clear()
         self.ax_resp.clear()
-        self.apply_graph_styling() 
         
         show_wrong = self.toggles['wrong_notes']
         
@@ -425,12 +462,14 @@ class MidiGameApp:
                 x_wrong.append(hit_index)
                 y_wrong.append(hit['velocity'])
                 
+                # Restored to response graph for visual tracking
                 x_all.append(hit_index)
                 y_response.append(hit['response_time'])
                 bar_colors.append(ERROR_COLOUR)
                 
         self.sc_correct = None
         self.sc_wrong = None
+        self.bars = []
         
         if x_correct:
             self.ax_vel.plot(x_correct, y_correct, color=ACCENT_COLOUR, alpha=0.4, zorder=1)
@@ -442,14 +481,20 @@ class MidiGameApp:
         if x_correct or x_wrong:
             self.ax_vel.legend(loc="lower right", facecolor=BG_COLOUR, edgecolor=TEXT_COLOUR, labelcolor=TEXT_COLOUR)
             
-        self.annot = self.ax_vel.annotate("", xy=(0,0), xytext=(10,10), textcoords="offset points",
+        if x_all:
+            self.bars = self.ax_resp.bar(x_all, y_response, color=bar_colors, alpha=0.8, width=0.5)
+
+        self.apply_graph_styling() 
+
+        self.annot_vel = self.ax_vel.annotate("", xy=(0,0), xytext=(10,10), textcoords="offset points",
                                      bbox=dict(boxstyle="round", fc=TOOLTIP_BG, ec=TEXT_COLOUR, alpha=0.9),
                                      color=TEXT_COLOUR, zorder=10)
-        self.annot.set_visible(False)
-            
-        if x_all:
-            self.ax_resp.bar(x_all, y_response, color=bar_colors, alpha=0.8, width=0.5)
-            self.ax_resp.set_yscale('log') 
+        self.annot_vel.set_visible(False)
+
+        self.annot_resp = self.ax_resp.annotate("", xy=(0,0), xytext=(0,10), textcoords="offset points",
+                                     bbox=dict(boxstyle="round", fc=TOOLTIP_BG, ec=TEXT_COLOUR, alpha=0.9),
+                                     color=TEXT_COLOUR, zorder=10, ha='center')
+        self.annot_resp.set_visible(False)
 
         self.canvas_vel.draw()
         self.canvas_resp.draw()

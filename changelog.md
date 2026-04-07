@@ -51,3 +51,17 @@ Basic app
 
 ### Fixed
 * **Spacebar Focus Hijacking:** Resolved an event-bubbling issue where pressing the spacebar activated the last-clicked UI button instead of generating a note.
+
+## [v1.4.0]
+
+### Added
+* **Response Time Tooltips:** Implemented interactive hover annotations on the response time bar chart to display exact intervals dynamically formatted in seconds (s) or milliseconds (ms).
+
+### Changed
+* **Window Management:** Disabled the maximize button to prevent the application from entering full-screen mode on macOS, locking the UI layout proportions.
+
+### Fixed
+* **Hover Annotations Sync:** Fixed an issue where tooltips for velocity and response time stopped appearing after the first note was played. This was resolved by re-initializing the annotation objects upon clearing and redrawing the Matplotlib axes.
+* **Log Scale Granularity:** Enhanced the response time graph's y-axis by injecting a custom `FixedLocator`, ensuring visible gradations explicitly between the 1s and 2s intervals (e.g., 1.2s, 1.4s) where response times frequently cluster.
+* **Logarithmic Formatter Override:** Resolved a persistent rendering bug where Matplotlib reverted the response time y-axis to scientific notation (e.g., 10^0) by enforcing the custom human-readable time formatter strictly *after* the logarithmic scale is instantiated on each redraw.
+* **Action Timer Logic & Visual Error Tracking:** Modified the core timing loop so that incorrect notes no longer reset the interval timer, whilst restoring incorrect hits to the response time graph. This creates a visual "struggle stack"—fluffed notes will plot as increasingly tall red bars, culminating in an accurately measured green bar reflecting the total time taken to successfully hunt down the correct octave.
